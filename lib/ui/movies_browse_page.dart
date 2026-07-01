@@ -4,37 +4,26 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/media_item.dart';
-import '../state/auth_controller.dart';
 import '../state/browse_controller.dart';
-import 'widgets/account_bar.dart';
 import 'widgets/media_card.dart';
 import 'widgets/movie_detail_dialog.dart';
 import 'widgets/movie_filter_sheet.dart';
 
-/// Browse upcoming and recent movie releases from TMDB, starting four weeks
-/// before today and extending into the future a month at a time. A search bar
-/// lets you find any movie to add to the watchlist.
-class MoviesBrowsePage extends StatelessWidget {
-  const MoviesBrowsePage({super.key});
+/// The Movies segment of the Discover tab: browse upcoming and recent movie
+/// releases from TMDB (starting four weeks before today and extending into the
+/// future a month at a time), plus a search bar to find any movie to add to the
+/// watchlist.
+///
+/// Body-only: a [BrowseController] must be provided above this widget, and the
+/// hosting shell owns the app bar (title, filter action, account bar).
+class MovieDiscoverBody extends StatefulWidget {
+  const MovieDiscoverBody({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) =>
-          BrowseController(auth: context.read<AuthController>())..init(),
-      child: const _BrowseView(),
-    );
-  }
+  State<MovieDiscoverBody> createState() => _MovieDiscoverBodyState();
 }
 
-class _BrowseView extends StatefulWidget {
-  const _BrowseView();
-
-  @override
-  State<_BrowseView> createState() => _BrowseViewState();
-}
-
-class _BrowseViewState extends State<_BrowseView> {
+class _MovieDiscoverBodyState extends State<MovieDiscoverBody> {
   final _searchController = TextEditingController();
   Timer? _debounce;
 
@@ -62,59 +51,38 @@ class _BrowseViewState extends State<_BrowseView> {
   Widget build(BuildContext context) {
     final browse = context.watch<BrowseController>();
 
-    final activeCount = browse.filters.activeCount;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Coming Soon',
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        actions: [
-          IconButton(
-            tooltip: 'Filters',
-            onPressed: () => _openFilters(context, browse),
-            icon: activeCount > 0
-                ? Badge.count(
-                    count: activeCount,
-                    child: const Icon(Icons.filter_list),
-                  )
-                : const Icon(Icons.filter_list),
-          ),
-          const AccountBarActions(),
-        ],
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: TextField(
-              controller: _searchController,
-              textInputAction: TextInputAction.search,
-              onChanged: _onQueryChanged,
-              decoration: InputDecoration(
-                hintText: 'Search for a movie to add…',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: browse.query.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: _clear,
-                      )
-                    : null,
-                filled: true,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                contentPadding: EdgeInsets.zero,
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          child: TextField(
+            controller: _searchController,
+            textInputAction: TextInputAction.search,
+            onChanged: _onQueryChanged,
+            decoration: InputDecoration(
+              hintText: 'Search for a movie to add…',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: browse.query.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: _clear,
+                    )
+                  : null,
+              filled: true,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
               ),
+              contentPadding: EdgeInsets.zero,
             ),
           ),
-          Expanded(
-            child: browse.query.isNotEmpty
-                ? _searchResults(context, browse)
-                : _discoverBody(context, browse),
-          ),
-        ],
-      ),
+        ),
+        Expanded(
+          child: browse.query.isNotEmpty
+              ? _searchResults(context, browse)
+              : _discoverBody(context, browse),
+        ),
+      ],
     );
   }
 
@@ -236,29 +204,31 @@ class _BrowseViewState extends State<_BrowseView> {
       ),
     );
   }
+}
 
-  Future<void> _openFilters(
-      BuildContext context, BrowseController browse) async {
-    final result = await showMovieFilterSheet(context, browse.filters);
-    if (result != null) {
-      await browse.applyFilters(result);
-    }
+/// Opens the movie filter sheet and applies the result. Exposed for the hosting
+/// shell's app-bar filter action.
+Future<void> openMovieFilters(
+    BuildContext context, BrowseController browse) async {
+  final result = await showMovieFilterSheet(context, browse.filters);
+  if (result != null) {
+    await browse.applyFilters(result);
   }
+}
 
-  /// Awaits a watchlist mutation and reports the outcome as a snackbar. The
-  /// success message is captured before the await since the item flips state.
-  Future<void> _run(
-    BuildContext context,
-    Future<void> action,
-    String successMessage,
-  ) async {
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      await action;
-      messenger.showSnackBar(SnackBar(content: Text(successMessage)));
-    } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('Action failed: $e')));
-    }
+/// Awaits a watchlist mutation and reports the outcome as a snackbar. The
+/// success message is captured before the await since the item flips state.
+Future<void> _run(
+  BuildContext context,
+  Future<void> action,
+  String successMessage,
+) async {
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    await action;
+    messenger.showSnackBar(SnackBar(content: Text(successMessage)));
+  } catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text('Action failed: $e')));
   }
 }
 

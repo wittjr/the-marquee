@@ -6,7 +6,7 @@ import '../services/token_store.dart';
 import '../services/trakt_api.dart';
 import '../services/trakt_auth_service.dart';
 import 'library_controller.dart';
-import 'shows_controller.dart';
+import 'show_watchlist_controller.dart';
 import 'watchlist_movies_controller.dart';
 
 enum AuthStatus { unknown, signedOut, signedIn }
@@ -68,7 +68,7 @@ class AuthController extends ChangeNotifier {
     await Future.wait([
       LibraryController.clearSnapshot(),
       WatchlistMoviesController.clearSnapshot(),
-      ShowsController.clearSnapshot(),
+      ShowWatchlistController.clearSnapshot(),
       EnrichmentCache.instance.clear(),
     ]);
     await _store.clear();

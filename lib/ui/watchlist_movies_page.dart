@@ -2,80 +2,25 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/media_item.dart';
-import '../state/auth_controller.dart';
 import '../state/watchlist_movies_controller.dart';
-import 'main_shell.dart';
-import 'widgets/account_bar.dart';
 import 'widgets/media_card.dart';
 import 'widgets/movie_detail_dialog.dart';
-import 'widgets/refresh_bar.dart';
 
-/// The Watchlist tab: the full list of movies on the user's Trakt watchlist,
-/// sorted by release date (oldest first).
-class WatchlistMoviesPage extends StatelessWidget {
-  const WatchlistMoviesPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) =>
-          WatchlistMoviesController(auth: context.read<AuthController>()),
-      child: const _WatchlistView(),
-    );
-  }
-}
-
-class _WatchlistView extends StatefulWidget {
-  const _WatchlistView();
-
-  @override
-  State<_WatchlistView> createState() => _WatchlistViewState();
-}
-
-class _WatchlistViewState extends State<_WatchlistView> {
-  ValueNotifier<int>? _tab;
-
-  @override
-  void initState() {
-    super.initState();
-    // Loading is driven by tab selection (like the TV Shows tab) so it stays in
-    // step with watchlist changes made on the Coming Soon / Up Next tabs, and
-    // doesn't pile onto the startup request burst.
-    _tab = context.read<ShellTabs>().selected;
-    _tab!.addListener(_onTabChanged);
-    if (_tab!.value == ShellTab.watchlist) _reload();
-  }
-
-  void _onTabChanged() {
-    if (_tab?.value == ShellTab.watchlist) _reload();
-  }
-
-  /// Deferred so we don't notify listeners during build. The controller ignores
-  /// re-entrant calls.
-  void _reload() =>
-      Future.microtask(context.read<WatchlistMoviesController>().load);
-
-  @override
-  void dispose() {
-    _tab?.removeListener(_onTabChanged);
-    super.dispose();
-  }
+/// The Movies segment of the Watchlist tab: the full list of movies on the
+/// user's Trakt watchlist, split into a "Coming Soon" section (unreleased,
+/// soonest first) and "All Movies".
+///
+/// Body-only: a [WatchlistMoviesController] must be provided above this widget,
+/// and the hosting shell owns the app bar.
+class MovieWatchlistBody extends StatelessWidget {
+  const MovieWatchlistBody({super.key});
 
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<WatchlistMoviesController>();
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Watchlist',
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        actions: const [AccountBarActions()],
-        bottom: controller.isRefreshing ? const RefreshBar() : null,
-      ),
-      body: RefreshIndicator(
-        onRefresh: controller.load,
-        child: _body(context, controller),
-      ),
+    return RefreshIndicator(
+      onRefresh: controller.load,
+      child: _body(context, controller),
     );
   }
 
@@ -90,20 +35,58 @@ class _WatchlistViewState extends State<_WatchlistView> {
         );
       case WatchlistLoadState.ready:
         if (controller.isEmpty) return const _EmptyView();
-        return GridView.builder(
+        // The controller sorts by release date ascending; "Coming Soon" is the
+        // unreleased head of that list, everything else falls under "All Movies".
+        final comingSoon =
+            controller.movies.where((m) => !m.isReleased).toList();
+        final rest = controller.movies.where((m) => m.isReleased).toList();
+        return CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16),
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: 200,
-            childAspectRatio: 0.5,
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
-          ),
-          itemCount: controller.movies.length,
-          itemBuilder: (context, i) =>
-              _card(context, controller, controller.movies[i]),
+          slivers: [
+            if (comingSoon.isNotEmpty) ...[
+              _sectionHeader('Coming Soon'),
+              _grid(context, controller, comingSoon),
+            ],
+            if (rest.isNotEmpty) ...[
+              _sectionHeader(comingSoon.isEmpty ? 'Watchlist' : 'All Movies'),
+              _grid(context, controller, rest),
+            ],
+            const SliverToBoxAdapter(child: SizedBox(height: 16)),
+          ],
         );
     }
+  }
+
+  Widget _sectionHeader(String title) {
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+        child: Text(title,
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+      ),
+    );
+  }
+
+  Widget _grid(
+    BuildContext context,
+    WatchlistMoviesController controller,
+    List<MediaItem> movies,
+  ) {
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      sliver: SliverGrid(
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 200,
+          childAspectRatio: 0.5,
+          crossAxisSpacing: 16,
+          mainAxisSpacing: 16,
+        ),
+        delegate: SliverChildBuilderDelegate(
+          (context, i) => _card(context, controller, movies[i]),
+          childCount: movies.length,
+        ),
+      ),
+    );
   }
 
   Widget _card(

@@ -286,6 +286,32 @@ class TraktApi {
   Future<List<MediaItem>> searchMovies(String query) =>
       _search('movie', query);
 
+  /// The most-watched shows on Trakt right now. Each entry wraps the show in a
+  /// `show` key (alongside a `watchers` count), which [MediaItem.fromTraktEntry]
+  /// already unwraps.
+  Future<List<MediaItem>> trendingShows({int limit = 30}) =>
+      _showList('trending', limit);
+
+  /// The most-anticipated upcoming shows on Trakt. Entries wrap the show in a
+  /// `show` key (alongside a `list_count`).
+  Future<List<MediaItem>> anticipatedShows({int limit = 30}) =>
+      _showList('anticipated', limit);
+
+  /// Fetches a Trakt show discovery list ('trending' or 'anticipated').
+  Future<List<MediaItem>> _showList(String kind, int limit) async {
+    final uri = Uri.parse('${AppConfig.traktApiBase}/shows/$kind')
+        .replace(queryParameters: {'limit': '$limit'});
+    final res = await _client.get(uri, headers: await _headers());
+    if (res.statusCode != 200) {
+      throw TraktApiException('shows-$kind', res.statusCode, res.body);
+    }
+    final list = jsonDecode(res.body) as List<dynamic>;
+    return list
+        .where((e) => (e as Map<String, dynamic>)['show'] != null)
+        .map((e) => MediaItem.fromTraktEntry(e as Map<String, dynamic>))
+        .toList();
+  }
+
   /// Searches a single Trakt media [type] ('show' or 'movie') for [query].
   Future<List<MediaItem>> _search(String type, String query) async {
     final uri = Uri.parse('${AppConfig.traktApiBase}/search/$type')

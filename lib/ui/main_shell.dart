@@ -1,20 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'discover_page.dart';
 import 'home_page.dart';
-import 'movies_browse_page.dart';
-import 'tv_shows_page.dart';
-import 'watchlist_movies_page.dart';
+import 'profile_page.dart';
+import 'watchlist_page.dart';
 
 /// Root shell shown once signed in: a bottom navigation bar switching between
-/// the Up Next dashboard, the Coming Soon browse page, the full movie Watchlist
-/// and TV Shows. (Profile isn't a tab — it opens as a route by tapping the
-/// username on the Up Next app bar.) Pages are kept alive across tab switches so
-/// scroll position and loaded data are preserved.
+/// the Up Next dashboard, Discover (movies + TV), Watchlist (movies + TV) and
+/// Profile. Discover and Watchlist each carry a Movies / TV segmented control.
+/// The username on the Up Next app bar also opens Profile as a shortcut. Pages
+/// are kept alive across tab switches so scroll position and loaded data are
+/// preserved.
 ///
 /// The selected index is exposed to descendants via a [ValueNotifier] so pages
-/// can refresh themselves when (re)selected — e.g. the TV Shows tab reloads its
-/// Watch Later list, which may have changed on another tab.
+/// can refresh themselves when (re)selected — e.g. the Watchlist tab reloads its
+/// movie and TV lists, which may have changed on another tab.
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
 
@@ -28,9 +29,9 @@ class _MainShellState extends State<MainShell> {
 
   static const _pages = [
     HomePage(),
-    MoviesBrowsePage(),
-    WatchlistMoviesPage(),
-    TvShowsPage(),
+    DiscoverPage(),
+    WatchlistPage(),
+    ProfilePage(),
   ];
 
   @override
@@ -57,9 +58,9 @@ class _MainShellState extends State<MainShell> {
                 label: 'Up Next',
               ),
               NavigationDestination(
-                icon: Icon(Icons.confirmation_number_outlined),
-                selectedIcon: Icon(Icons.confirmation_number),
-                label: 'Coming Soon',
+                icon: Icon(Icons.search_outlined),
+                selectedIcon: Icon(Icons.search),
+                label: 'Discover',
               ),
               NavigationDestination(
                 icon: Icon(Icons.bookmarks_outlined),
@@ -67,9 +68,9 @@ class _MainShellState extends State<MainShell> {
                 label: 'Watchlist',
               ),
               NavigationDestination(
-                icon: Icon(Icons.live_tv_outlined),
-                selectedIcon: Icon(Icons.live_tv),
-                label: 'TV Shows',
+                icon: Icon(Icons.person_outline),
+                selectedIcon: Icon(Icons.person),
+                label: 'Profile',
               ),
             ],
           ),
@@ -82,9 +83,9 @@ class _MainShellState extends State<MainShell> {
 /// The tab index of each [MainShell] page, for pages that refresh on selection.
 class ShellTab {
   static const upNext = 0;
-  static const comingSoon = 1;
+  static const discover = 1;
   static const watchlist = 2;
-  static const tvShows = 3;
+  static const profile = 3;
 }
 
 /// Holds the shell's selected-tab notifier so descendants can react to tab

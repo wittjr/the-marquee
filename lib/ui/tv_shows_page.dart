@@ -1,200 +1,41 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/watchlist_show.dart';
-import '../state/auth_controller.dart';
-import '../state/shows_controller.dart';
-import 'main_shell.dart';
-import 'widgets/account_bar.dart';
-import 'widgets/media_card.dart';
-import 'widgets/refresh_bar.dart';
+import '../state/show_watchlist_controller.dart';
 import 'widgets/show_detail_dialog.dart';
 import 'widgets/show_episode_card.dart';
 
-/// The TV Shows tab: search Trakt for shows to add to the watchlist, and resume
-/// shows parked on the "Watch Later" list.
-class TvShowsPage extends StatelessWidget {
-  const TvShowsPage({super.key});
+/// The TV segment of the Watchlist tab: the full show watchlist, split into
+/// New Episodes (an aired episode waiting), Recently Watched, and All Shows.
+///
+/// Body-only: a [ShowWatchlistController] must be provided above this widget,
+/// and the hosting shell owns the app bar.
+class ShowWatchlistBody extends StatelessWidget {
+  const ShowWatchlistBody({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // Loading is driven by tab selection (see [_TvShowsViewState]) rather than
-    // eagerly at startup, so it doesn't pile onto the startup request burst and
-    // it refreshes whenever the user returns to the tab.
-    return ChangeNotifierProvider(
-      create: (_) => ShowsController(auth: context.read<AuthController>()),
-      child: const _TvShowsView(),
-    );
-  }
-}
+    final shows = context.watch<ShowWatchlistController>();
 
-class _TvShowsView extends StatefulWidget {
-  const _TvShowsView();
-
-  @override
-  State<_TvShowsView> createState() => _TvShowsViewState();
-}
-
-class _TvShowsViewState extends State<_TvShowsView> {
-  final _searchController = TextEditingController();
-  Timer? _debounce;
-  ValueNotifier<int>? _tab;
-
-  @override
-  void initState() {
-    super.initState();
-    _tab = context.read<ShellTabs>().selected;
-    _tab!.addListener(_onTabChanged);
-    // Load now if this tab is the one already showing.
-    if (_tab!.value == ShellTab.tvShows) _reload();
-  }
-
-  void _onTabChanged() {
-    if (_tab?.value == ShellTab.tvShows) _reload();
-  }
-
-  /// Refreshes the Watch Later list (the controller ignores re-entrant calls),
-  /// so shows moved to/from the list on other tabs are reflected on return.
-  /// Deferred so we don't notify listeners during build.
-  void _reload() => Future.microtask(context.read<ShowsController>().load);
-
-  @override
-  void dispose() {
-    _tab?.removeListener(_onTabChanged);
-    _debounce?.cancel();
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  void _onQueryChanged(String value) {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), () {
-      context.read<ShowsController>().search(value);
-    });
-  }
-
-  void _clear() {
-    _debounce?.cancel();
-    _searchController.clear();
-    context.read<ShowsController>().clearSearch();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final shows = context.watch<ShowsController>();
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('TV Shows',
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        actions: const [AccountBarActions()],
-        bottom: shows.isRefreshing ? const RefreshBar() : null,
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: TextField(
-              controller: _searchController,
-              textInputAction: TextInputAction.search,
-              onChanged: _onQueryChanged,
-              decoration: InputDecoration(
-                hintText: 'Search for a show to add…',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: shows.query.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: _clear,
-                      )
-                    : null,
-                filled: true,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                contentPadding: EdgeInsets.zero,
-              ),
-            ),
-          ),
-          Expanded(
-            child: shows.query.isNotEmpty
-                ? _SearchResults(shows: shows)
-                : _WatchLaterList(shows: shows),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SearchResults extends StatelessWidget {
-  final ShowsController shows;
-  const _SearchResults({required this.shows});
-
-  @override
-  Widget build(BuildContext context) {
-    if (shows.searching && shows.results.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (shows.results.isEmpty) {
-      return const _Hint(
-        icon: Icons.search_off,
-        message: 'No shows found',
-      );
-    }
-    return GridView.builder(
-      padding: const EdgeInsets.all(16),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 200,
-        childAspectRatio: 0.5,
-        crossAxisSpacing: 16,
-        mainAxisSpacing: 16,
-      ),
-      itemCount: shows.results.length,
-      itemBuilder: (context, i) {
-        final item = shows.results[i];
-        return MediaCard(
-          item: item,
-          busy: shows.isBusy(item),
-          onToggleWatchlist: () => _run(
-            context,
-            shows.toggleWatchlist(item),
-            item.onWatchlist
-                ? 'Removed “${item.title}” from watchlist'
-                : 'Added “${item.title}” to watchlist',
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _WatchLaterList extends StatelessWidget {
-  final ShowsController shows;
-  const _WatchLaterList({required this.shows});
-
-  @override
-  Widget build(BuildContext context) {
     switch (shows.state) {
-      case ShowsState.loading:
+      case ShowWatchlistState.loading:
         return const Center(child: CircularProgressIndicator());
-      case ShowsState.error:
+      case ShowWatchlistState.error:
         return _Hint(
           icon: Icons.error_outline,
           message: shows.error ?? 'Something went wrong',
         );
-      case ShowsState.ready:
-        if (shows.watchLaterShows.isEmpty) {
+      case ShowWatchlistState.ready:
+        if (shows.isEmpty) {
           return RefreshIndicator(
             onRefresh: shows.load,
             child: ListView(
               children: const [
                 SizedBox(height: 120),
                 _Hint(
-                  icon: Icons.watch_later_outlined,
-                  message: 'Your Watch Later list is empty',
+                  icon: Icons.tv_off_outlined,
+                  message: 'Your TV watchlist is empty',
                 ),
               ],
             ),
@@ -202,48 +43,76 @@ class _WatchLaterList extends StatelessWidget {
         }
         return RefreshIndicator(
           onRefresh: shows.load,
-          child: ListView.builder(
+          child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-            itemCount: shows.watchLaterShows.length + 1,
-            itemBuilder: (context, i) {
-              if (i == 0) {
-                return const Padding(
-                  padding: EdgeInsets.fromLTRB(0, 8, 0, 8),
-                  child: Text('Watch Later',
-                      style: TextStyle(
-                          fontSize: 20, fontWeight: FontWeight.bold)),
-                );
-              }
-              final ws = shows.watchLaterShows[i - 1];
-              return ShowEpisodeCard(
-                show: ws,
-                busy: shows.isShowBusy(ws),
-                onWatch: ws.nextEpisode != null
-                    ? () => _watch(context, ws)
-                    : null,
-                onTap: () => showDialog(
-                  context: context,
-                  builder: (_) => ShowDetailDialog(
-                    show: ws,
-                    onWatch: ws.nextEpisode != null
-                        ? () => shows.markNextEpisodeWatched(ws)
-                        : null,
-                    onRemoveFromHistory: () => shows.removeFromHistory(ws),
-                  ),
-                ),
-              );
-            },
+            slivers: [
+              ..._section(context, shows, 'New Episodes', shows.newEpisodes),
+              ..._section(
+                  context, shows, 'Recently Watched', shows.recentlyWatched),
+              ..._section(context, shows, 'All Shows', shows.allShows),
+              const SliverToBoxAdapter(child: SizedBox(height: 16)),
+            ],
           ),
         );
     }
   }
 
-  void _watch(BuildContext context, WatchlistShow ws) => _run(
-        context,
-        shows.markNextEpisodeWatched(ws),
-        'Marked ${ws.nextEpisode!.code} of “${ws.show.title}” watched · moved to Watchlist',
-      );
+  /// A titled section of show cards, or nothing when [items] is empty.
+  List<Widget> _section(
+    BuildContext context,
+    ShowWatchlistController shows,
+    String title,
+    List<WatchlistShow> items,
+  ) {
+    if (items.isEmpty) return const [];
+    return [
+      SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+          child: Text(title,
+              style:
+                  const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        ),
+      ),
+      SliverPadding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        sliver: SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, i) => _card(context, shows, items[i]),
+            childCount: items.length,
+          ),
+        ),
+      ),
+    ];
+  }
+
+  Widget _card(
+    BuildContext context,
+    ShowWatchlistController shows,
+    WatchlistShow ws,
+  ) {
+    return ShowEpisodeCard(
+      show: ws,
+      busy: shows.isShowBusy(ws),
+      onWatch: ws.nextEpisode != null
+          ? () => _run(
+                context,
+                shows.markNextEpisodeWatched(ws),
+                'Marked ${ws.nextEpisode!.code} of “${ws.show.title}” watched',
+              )
+          : null,
+      onTap: () => showDialog(
+        context: context,
+        builder: (_) => ShowDetailDialog(
+          show: ws,
+          onWatch: ws.nextEpisode != null
+              ? () => shows.markNextEpisodeWatched(ws)
+              : null,
+          onRemoveFromHistory: () => shows.removeFromHistory(ws),
+        ),
+      ),
+    );
+  }
 }
 
 class _Hint extends StatelessWidget {
