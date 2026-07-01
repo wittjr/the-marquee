@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/jwitt/Development/upcoming-movies-pwa/pages/**)",
+      "Read(//Users/jwitt/Development/upcoming-movies-pwa/lib/**)",
+      "Bash(flutter analyze *)",
+      "Bash(flutter test *)",
+      "Bash(flutter build *)",
+      "Read(//Users/jwitt/Development/upcoming-movies-pwa/components/**)",
+      "Read(//Users/jwitt/Development/upcoming-movies-pwa/pages/api/watched/**)",
+      "Read(//Users/jwitt/Development/upcoming-movies-pwa/pages/api/watchlist/**)"
+    ]
+  }
+}

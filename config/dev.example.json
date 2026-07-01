@@ -1,0 +1,5 @@
+{
+  "TRAKT_ID": "your-trakt-client-id",
+  "TRAKT_SECRET": "your-trakt-client-secret",
+  "TMDB_READ_TOKEN": "your-tmdb-v4-read-access-token"
+}

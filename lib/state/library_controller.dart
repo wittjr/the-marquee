@@ -1,0 +1,434 @@
+import 'package:flutter/foundation.dart';
+
+import '../models/media_item.dart';
+import '../models/watchlist_show.dart';
+import '../services/concurrency.dart';
+import '../services/prefs_cache.dart';
+import '../services/show_enricher.dart';
+import '../services/tmdb_api.dart';
+import '../services/trakt_api.dart';
+import 'auth_controller.dart';
+
+enum LoadState { idle, loading, ready, error }
+
+/// Loads the watchlist from Trakt and enriches it with TMDB metadata, then
+/// exposes it sorted by release date for the home page.
+class LibraryController extends ChangeNotifier {
+  final TraktApi _trakt;
+  final TmdbApi _tmdb;
+  final AuthController _auth;
+
+  LibraryController({
+    required AuthController auth,
+    TraktApi? trakt,
+    TmdbApi? tmdb,
+  })  : _auth = auth,
+        _trakt = trakt ?? TraktApi(auth),
+        _tmdb = tmdb ?? TmdbApi();
+
+  late final ShowEnricher _enricher = ShowEnricher(_trakt, _tmdb);
+
+  /// Name of the personal Trakt list used to park shows the user has stopped
+  /// watching. Shows on it are hidden from the home page.
+  static const _watchLaterListName = 'Watch Later';
+
+  /// Persisted snapshot of the last-built home view, for an instant render on a
+  /// cold start (the network refresh then runs in the background).
+  static const _snapshotStore = PrefsCache('home_snapshot_v1');
+
+  LoadState _state = LoadState.idle;
+  LoadState get state => _state;
+
+  /// True while a background refresh is running over already-rendered cached
+  /// data, so the UI can show a subtle indicator without blocking interaction.
+  bool _refreshing = false;
+  bool get isRefreshing => _refreshing;
+
+  /// Trakt id of the "Watch Later" list, and the trakt ids of shows on it.
+  int? _watchLaterListId;
+  Set<int> _watchLaterShowIds = const {};
+
+  String? _error;
+  String? get error => _error;
+
+  List<MediaItem> _items = const [];
+  List<MediaItem> get items => _items;
+
+  /// Movies not yet released, soonest first (ascending).
+  List<MediaItem> get upcomingMovies =>
+      _items.where((e) => e.isMovie && !e.isReleased).toList()
+        ..sort((a, b) => -_byRecent(a, b));
+
+  /// Released movies, most recent first (descending).
+  List<MediaItem> get movies =>
+      _items.where((e) => e.isMovie && e.isReleased).toList(growable: false);
+
+  /// Shows watched recently, or aired within the last month; most recent first.
+  List<WatchlistShow> _recentShows = const [];
+  List<WatchlistShow> get recentShows => _recentShows;
+
+  /// In-progress shows not watched in a while; most recently watched first.
+  List<WatchlistShow> _staleShows = const [];
+  List<WatchlistShow> get staleShows => _staleShows;
+
+  /// Shows with no episodes watched; alphabetical.
+  List<WatchlistShow> _notStartedShows = const [];
+  List<WatchlistShow> get notStartedShows => _notStartedShows;
+
+  bool get isEmpty =>
+      _items.isEmpty &&
+      _recentShows.isEmpty &&
+      _staleShows.isEmpty &&
+      _notStartedShows.isEmpty;
+
+  Future<void> load() async {
+    // On the first load, paint the persisted snapshot immediately and refresh
+    // in the background (stale-while-revalidate); a cold PWA open then shows
+    // data instantly. Pull-to-refresh / retry calls skip straight to a fetch.
+    if (_state == LoadState.idle && await _restoreSnapshot()) {
+      _state = LoadState.ready;
+      _refreshing = true;
+    } else if (_state == LoadState.ready) {
+      _refreshing = true; // refreshing over already-visible data
+    } else {
+      _state = LoadState.loading;
+    }
+    _error = null;
+    notifyListeners();
+
+    try {
+      // Resolve username once for display, non-fatal if it fails.
+      _trakt.fetchUsername().then(_auth.setUsername).ignore();
+
+      final items = await _trakt.watchlist();
+      // Enrich with bounded concurrency; failures per-item swallowed in enrich.
+      await pooledForEach(items, _tmdb.enrich);
+
+      // Resolve the "Watch Later" list so its shows can be excluded below and
+      // "Stop Watching" can add to it. Best-effort: failures leave it empty.
+      await _loadWatchLater();
+
+      _items = items.where((e) => e.isMovie).where(_isVisible).toList()
+        ..sort(_byRecent);
+
+      final watchlistShows = await pooledMap(
+          items.where((e) => e.isShow), _enricher.buildShow);
+
+      // Merge in-progress shows from Trakt's "up next" progress endpoint that
+      // aren't on the watchlist (best-effort; ignored if the call fails).
+      final extraShows = await _loadInProgressNotOnWatchlist(watchlistShows);
+
+      _splitShows([...watchlistShows, ...extraShows]);
+
+      _state = LoadState.ready;
+      await _saveSnapshot();
+    } catch (e) {
+      _error = e.toString();
+      // Keep showing cached data if we have any; only surface the error when
+      // there's nothing on screen to fall back to.
+      if (isEmpty) _state = LoadState.error;
+    } finally {
+      _refreshing = false;
+      notifyListeners();
+    }
+  }
+
+  /// Rehydrates the home view from the persisted snapshot. Returns true when it
+  /// restored something renderable. Never throws.
+  Future<bool> _restoreSnapshot() async {
+    final data = (await _snapshotStore.read())?.data;
+    if (data is! Map) return false;
+    try {
+      _items = _mediaFrom(data['movies']);
+      _recentShows = _showsFrom(data['recent']);
+      _staleShows = _showsFrom(data['stale']);
+      _notStartedShows = _showsFrom(data['notStarted']);
+      return !isEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _saveSnapshot() => _snapshotStore.write({
+        'movies': _items.map((e) => e.toJson()).toList(),
+        'recent': _recentShows.map((e) => e.toJson()).toList(),
+        'stale': _staleShows.map((e) => e.toJson()).toList(),
+        'notStarted': _notStartedShows.map((e) => e.toJson()).toList(),
+      });
+
+  static List<MediaItem> _mediaFrom(Object? raw) => ((raw as List?) ?? const [])
+      .map((e) => MediaItem.fromJson((e as Map).cast<String, dynamic>()))
+      .toList();
+
+  static List<WatchlistShow> _showsFrom(Object? raw) =>
+      ((raw as List?) ?? const [])
+          .map((e) => WatchlistShow.fromJson((e as Map).cast<String, dynamic>()))
+          .toList();
+
+  /// Clears the persisted home snapshot (e.g. on sign-out).
+  static Future<void> clearSnapshot() => _snapshotStore.clear();
+
+  /// Loads the "Watch Later" list id and the trakt ids of shows on it.
+  /// Best-effort: any failure (including the list not existing) leaves it empty.
+  Future<void> _loadWatchLater() async {
+    try {
+      final id = await _trakt.findListId(_watchLaterListName);
+      _watchLaterListId = id;
+      _watchLaterShowIds =
+          id != null ? await _trakt.listShowTraktIds(id) : const {};
+    } catch (_) {
+      _watchLaterListId = null;
+      _watchLaterShowIds = const {};
+    }
+  }
+
+  /// Fetches the user's watched shows and keeps those not already on the
+  /// watchlist that are still in progress (have aired episodes left to watch).
+  /// Only in-progress shows get a per-show progress call, so a large history of
+  /// finished shows doesn't fan out into hundreds of requests. Best-effort:
+  /// returns empty on failure.
+  Future<List<WatchlistShow>> _loadInProgressNotOnWatchlist(
+      List<WatchlistShow> watchlistShows) async {
+    try {
+      final watched = await _trakt.watchedShows();
+      final known = watchlistShows
+          .map((ws) => ws.show.ids.trakt)
+          .whereType<int>()
+          .toSet();
+      final inProgress = watched
+          .where((s) =>
+              s.show.ids.trakt != null &&
+              !known.contains(s.show.ids.trakt) &&
+              s.inProgress)
+          .map((s) => s.show);
+
+      final built = await pooledMap(inProgress, _enricher.buildShow);
+      // Only keep shows with something left to watch.
+      return built.where((ws) => ws.nextEpisode != null).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// How long since the last watch before an in-progress show drops from
+  /// "Recently Watched" into the "Not watched in a while" section.
+  static const _staleAfter = Duration(days: 30);
+
+  /// Splits shows into three sections: "Recently Watched / Just Released" (has
+  /// views recently OR aired in the last month), "Not watched in a while" (has
+  /// views but not in [_staleAfter], with episodes left), and "Not Started"
+  /// (the rest, A–Z). A just-released show you haven't started is treated as
+  /// recently-released.
+  void _splitShows(List<WatchlistShow> shows) {
+    final now = DateTime.now();
+    final releasedCutoff = DateTime(now.year, now.month - 1, now.day);
+    final staleCutoff = now.subtract(_staleAfter);
+
+    final recent = <WatchlistShow>[];
+    final stale = <WatchlistShow>[];
+    final notStarted = <WatchlistShow>[];
+    for (final ws in shows) {
+      // Hide shows the user has parked on the "Watch Later" list.
+      final traktId = ws.show.ids.trakt;
+      if (traktId != null && _watchLaterShowIds.contains(traktId)) continue;
+      // Hide shows you're fully caught up on: watched, with nothing left to
+      // watch (no next episode).
+      if (ws.hasViews && ws.nextEpisode == null) continue;
+
+      // A next episode that aired recently is fresh content to watch, so the
+      // show is "just released" even if it's been a while since you watched.
+      final nextAir = ws.nextEpisode?.airDate;
+      final freshEpisode = nextAir != null && nextAir.isAfter(staleCutoff);
+
+      if (ws.hasViews) {
+        final lastWatched = ws.lastWatchedAt;
+        final watchedRecently =
+            lastWatched != null && !lastWatched.isBefore(staleCutoff);
+        if (watchedRecently || freshEpisode) {
+          recent.add(ws);
+        } else {
+          stale.add(ws);
+        }
+      } else if (freshEpisode ||
+          (ws.releaseDate != null && ws.releaseDate!.isAfter(releasedCutoff))) {
+        recent.add(ws);
+      } else {
+        notStarted.add(ws);
+      }
+    }
+
+    recent.sort(_byRecency);
+    stale.sort(_byRecency);
+    notStarted.sort((a, b) =>
+        a.show.title.toLowerCase().compareTo(b.show.title.toLowerCase()));
+
+    _recentShows = recent;
+    _staleShows = stale;
+    _notStartedShows = notStarted;
+  }
+
+  /// Latest activity for sorting: the most recent of last-watched, next-episode
+  /// air date, and latest aired episode. Most recent first; undated shows sink
+  /// to the bottom by title.
+  int _byRecency(WatchlistShow a, WatchlistShow b) {
+    final da = _recencyOf(a);
+    final db = _recencyOf(b);
+    if (da == null && db == null) return a.show.title.compareTo(b.show.title);
+    if (da == null) return 1;
+    if (db == null) return -1;
+    return db.compareTo(da);
+  }
+
+  DateTime? _recencyOf(WatchlistShow ws) {
+    DateTime? latest;
+    for (final d in [ws.lastWatchedAt, ws.nextEpisode?.airDate, ws.releaseDate]) {
+      if (d != null && (latest == null || d.isAfter(latest))) latest = d;
+    }
+    return latest;
+  }
+
+  /// Movies are limited to a window from one year ago through one month ahead
+  /// (i.e. recently released or releasing soon); shows are always shown.
+  bool _isVisible(MediaItem item) {
+    if (item.isShow) return true;
+    final date = item.releaseDate;
+    if (date == null) return false;
+    final now = DateTime.now();
+    final upperCutoff = DateTime(now.year, now.month + 1, now.day);
+    final lowerCutoff = DateTime(now.year - 1, now.month, now.day);
+    return !date.isAfter(upperCutoff) && !date.isBefore(lowerCutoff);
+  }
+
+  /// Most recent first (movie release date / latest aired episode); undated
+  /// items sink to the bottom, ordered by title.
+  int _byRecent(MediaItem a, MediaItem b) {
+    final da = a.releaseDate;
+    final db = b.releaseDate;
+    if (da == null && db == null) return a.title.compareTo(b.title);
+    if (da == null) return 1;
+    if (db == null) return -1;
+    return db.compareTo(da);
+  }
+
+  // --- Per-item watchlist / watched mutations ---
+
+  final Set<int> _busyIds = {};
+
+  bool isBusy(MediaItem item) =>
+      item.ids.trakt != null && _busyIds.contains(item.ids.trakt);
+
+  bool isShowBusy(WatchlistShow ws) =>
+      ws.show.ids.trakt != null && _busyIds.contains(ws.show.ids.trakt);
+
+  /// Marks the show's next episode watched, then advances [ws] to the new next
+  /// episode (or caught-up). Updates in place; sections re-split on next load.
+  Future<void> markNextEpisodeWatched(WatchlistShow ws) async {
+    final ep = ws.nextEpisode;
+    if (ep == null) return;
+
+    final busyId = ws.show.ids.trakt;
+    if (busyId != null) {
+      _busyIds.add(busyId);
+      notifyListeners();
+    }
+    try {
+      await _trakt.markEpisodeWatched(ws.show, ep.season, ep.number);
+      ws.hasViews = true;
+      ws.lastWatchedAt = DateTime.now();
+
+      final progress = await _trakt.showProgress(ws.show);
+      if (progress.lastWatchedAt != null) {
+        ws.lastWatchedAt = progress.lastWatchedAt;
+      }
+      ws.nextEpisode = progress.nextEpisode != null
+          ? await _enricher.buildNextEpisode(ws.show, progress.nextEpisode!)
+          : null;
+    } finally {
+      if (busyId != null) _busyIds.remove(busyId);
+      notifyListeners();
+    }
+  }
+
+  /// Adds [ws] to the "Watch Later" list, removes it from the watchlist, and
+  /// removes it from the home view, so its episodes stop appearing in the show
+  /// sections.
+  Future<void> stopWatching(WatchlistShow ws) async {
+    final listId = _watchLaterListId;
+    if (listId == null) {
+      throw StateError('No "$_watchLaterListName" list found on Trakt');
+    }
+    final busyId = ws.show.ids.trakt;
+    if (busyId != null) {
+      _busyIds.add(busyId);
+      notifyListeners();
+    }
+    try {
+      await _trakt.addShowToList(listId, ws.show);
+      if (ws.show.onWatchlist) {
+        await _trakt.removeFromWatchlist(ws.show);
+      }
+      if (busyId != null) {
+        _watchLaterShowIds = {..._watchLaterShowIds, busyId};
+      }
+      _recentShows = List.of(_recentShows)..remove(ws);
+      _notStartedShows = List.of(_notStartedShows)..remove(ws);
+    } finally {
+      if (busyId != null) _busyIds.remove(busyId);
+      notifyListeners();
+    }
+  }
+
+  /// Clears the show's watch history and removes it from both the watchlist and
+  /// the "Watch Later" list, then drops it from the home view entirely.
+  Future<void> removeFromHistory(WatchlistShow ws) async {
+    final busyId = ws.show.ids.trakt;
+    if (busyId != null) {
+      _busyIds.add(busyId);
+      notifyListeners();
+    }
+    try {
+      await _trakt.removeShowFromHistory(ws.show);
+      if (ws.show.onWatchlist) {
+        await _trakt.removeFromWatchlist(ws.show);
+      }
+      final listId = _watchLaterListId;
+      if (listId != null) {
+        await _trakt.removeShowFromList(listId, ws.show);
+        if (busyId != null) {
+          _watchLaterShowIds = {..._watchLaterShowIds}..remove(busyId);
+        }
+      }
+      _recentShows = List.of(_recentShows)..remove(ws);
+      _notStartedShows = List.of(_notStartedShows)..remove(ws);
+    } finally {
+      if (busyId != null) _busyIds.remove(busyId);
+      notifyListeners();
+    }
+  }
+
+  /// Marks [item] watched on Trakt and drops it from the home list.
+  Future<void> markWatched(MediaItem item) =>
+      _mutate(item, () => _trakt.markWatched(item));
+
+  /// Removes [item] from the Trakt watchlist and from the home list.
+  Future<void> removeFromWatchlist(MediaItem item) =>
+      _mutate(item, () => _trakt.removeFromWatchlist(item));
+
+  /// Runs a sync action with per-item busy state, then removes the item from
+  /// the list (both actions take it off the watchlist view). Rethrows on error
+  /// so the UI can surface it.
+  Future<void> _mutate(MediaItem item, Future<void> Function() action) async {
+    final id = item.ids.trakt;
+    if (id != null) {
+      _busyIds.add(id);
+      notifyListeners();
+    }
+    try {
+      await action();
+      _items = List.of(_items)..remove(item);
+    } finally {
+      if (id != null) _busyIds.remove(id);
+      notifyListeners();
+    }
+  }
+}
