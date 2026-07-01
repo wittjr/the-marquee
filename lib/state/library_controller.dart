@@ -75,6 +75,11 @@ class LibraryController extends ChangeNotifier {
   List<WatchlistShow> _notStartedShows = const [];
   List<WatchlistShow> get notStartedShows => _notStartedShows;
 
+  /// The full set of shows behind the three sections above, kept so a per-item
+  /// mutation (marking an episode watched, stopping a show) can re-bucket the
+  /// sections in place without waiting for the next network reload.
+  List<WatchlistShow> _allShows = const [];
+
   bool get isEmpty =>
       _items.isEmpty &&
       _recentShows.isEmpty &&
@@ -118,7 +123,8 @@ class LibraryController extends ChangeNotifier {
       // aren't on the watchlist (best-effort; ignored if the call fails).
       final extraShows = await _loadInProgressNotOnWatchlist(watchlistShows);
 
-      _splitShows([...watchlistShows, ...extraShows]);
+      _allShows = [...watchlistShows, ...extraShows];
+      _splitShows(_allShows);
 
       _state = LoadState.ready;
       await _saveSnapshot();
@@ -143,6 +149,7 @@ class LibraryController extends ChangeNotifier {
       _recentShows = _showsFrom(data['recent']);
       _staleShows = _showsFrom(data['stale']);
       _notStartedShows = _showsFrom(data['notStarted']);
+      _allShows = [..._recentShows, ..._staleShows, ..._notStartedShows];
       return !isEmpty;
     } catch (_) {
       return false;
@@ -218,7 +225,8 @@ class LibraryController extends ChangeNotifier {
   /// views recently OR aired in the last month), "Not watched in a while" (has
   /// views but not in [_staleAfter], with episodes left), and "Not Started"
   /// (the rest, A–Z). A just-released show you haven't started is treated as
-  /// recently-released.
+  /// recently-released. Upcoming shows that haven't premiered yet are excluded
+  /// entirely — there's nothing to watch, so they only live on the Watchlist tab.
   void _splitShows(List<WatchlistShow> shows) {
     final now = DateTime.now();
     final releasedCutoff = DateTime(now.year, now.month - 1, now.day);
@@ -235,10 +243,13 @@ class LibraryController extends ChangeNotifier {
       // watch (no next episode).
       if (ws.hasViews && ws.nextEpisode == null) continue;
 
-      // A next episode that aired recently is fresh content to watch, so the
-      // show is "just released" even if it's been a while since you watched.
+      // A next episode that aired in the recent past is fresh content to watch,
+      // so the show is "just released" even if it's been a while since you
+      // watched. A *future* air date isn't watchable yet, so it doesn't count.
       final nextAir = ws.nextEpisode?.airDate;
-      final freshEpisode = nextAir != null && nextAir.isAfter(staleCutoff);
+      final freshEpisode = nextAir != null &&
+          nextAir.isAfter(staleCutoff) &&
+          !nextAir.isAfter(now);
 
       if (ws.hasViews) {
         final lastWatched = ws.lastWatchedAt;
@@ -249,11 +260,20 @@ class LibraryController extends ChangeNotifier {
         } else {
           stale.add(ws);
         }
-      } else if (freshEpisode ||
-          (ws.releaseDate != null && ws.releaseDate!.isAfter(releasedCutoff))) {
-        recent.add(ws);
       } else {
-        notStarted.add(ws);
+        // No episodes watched yet. "Just released" is bounded to the recent
+        // past so a future premiere date doesn't qualify.
+        final releasedRecently = ws.releaseDate != null &&
+            ws.releaseDate!.isAfter(releasedCutoff) &&
+            !ws.releaseDate!.isAfter(now);
+        if (freshEpisode || releasedRecently) {
+          recent.add(ws);
+        } else if (_notYetAired(ws, now)) {
+          // Upcoming show that hasn't premiered — nothing to watch yet.
+          continue;
+        } else {
+          notStarted.add(ws);
+        }
       }
     }
 
@@ -265,6 +285,17 @@ class LibraryController extends ChangeNotifier {
     _recentShows = recent;
     _staleShows = stale;
     _notStartedShows = notStarted;
+  }
+
+  /// True when an unstarted show has nothing available to watch yet: its next
+  /// (first) episode airs in the future, or — with no episode data — its
+  /// premiere date is still ahead. Shows with unknown dates are treated as
+  /// available (they fall through to "Not Started").
+  bool _notYetAired(WatchlistShow ws, DateTime now) {
+    final nextAir = ws.nextEpisode?.airDate;
+    if (nextAir != null) return nextAir.isAfter(now);
+    final release = ws.releaseDate;
+    return release != null && release.isAfter(now);
   }
 
   /// Latest activity for sorting: the most recent of last-watched, next-episode
@@ -321,7 +352,7 @@ class LibraryController extends ChangeNotifier {
       ws.show.ids.trakt != null && _busyIds.contains(ws.show.ids.trakt);
 
   /// Marks the show's next episode watched, then advances [ws] to the new next
-  /// episode (or caught-up). Updates in place; sections re-split on next load.
+  /// episode (or caught-up) and re-buckets the sections in place.
   Future<void> markNextEpisodeWatched(WatchlistShow ws) async {
     final ep = ws.nextEpisode;
     if (ep == null) return;
@@ -343,6 +374,8 @@ class LibraryController extends ChangeNotifier {
       ws.nextEpisode = progress.nextEpisode != null
           ? await _enricher.buildNextEpisode(ws.show, progress.nextEpisode!)
           : null;
+      _splitShows(_allShows);
+      await _saveSnapshot();
     } finally {
       if (busyId != null) _busyIds.remove(busyId);
       notifyListeners();
@@ -370,8 +403,8 @@ class LibraryController extends ChangeNotifier {
       if (busyId != null) {
         _watchLaterShowIds = {..._watchLaterShowIds, busyId};
       }
-      _recentShows = List.of(_recentShows)..remove(ws);
-      _notStartedShows = List.of(_notStartedShows)..remove(ws);
+      _allShows = List.of(_allShows)..remove(ws);
+      _splitShows(_allShows);
     } finally {
       if (busyId != null) _busyIds.remove(busyId);
       notifyListeners();
@@ -398,8 +431,8 @@ class LibraryController extends ChangeNotifier {
           _watchLaterShowIds = {..._watchLaterShowIds}..remove(busyId);
         }
       }
-      _recentShows = List.of(_recentShows)..remove(ws);
-      _notStartedShows = List.of(_notStartedShows)..remove(ws);
+      _allShows = List.of(_allShows)..remove(ws);
+      _splitShows(_allShows);
     } finally {
       if (busyId != null) _busyIds.remove(busyId);
       notifyListeners();
