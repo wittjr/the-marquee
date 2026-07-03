@@ -55,6 +55,7 @@ class EnrichmentCache {
     if (g != null) item.genres = g;
     item.runtime = e['r'] as int? ?? item.runtime;
     item.releaseDate = parseIsoOrNull(e['d']) ?? item.releaseDate;
+    item.status = e['st'] as String? ?? item.status;
     item.voteCount = e['v'] as int? ?? item.voteCount;
     return true;
   }
@@ -69,6 +70,7 @@ class EnrichmentCache {
       if (item.genres.isNotEmpty) 'g': item.genres,
       if (item.runtime != null) 'r': item.runtime,
       if (item.releaseDate != null) 'd': item.releaseDate!.toIso8601String(),
+      if (item.status != null) 'st': item.status,
       if (item.voteCount != null) 'v': item.voteCount,
       'at': DateTime.now().toIso8601String(),
     };

@@ -28,6 +28,11 @@ class MediaItem {
   /// episode, falling back to first air date.
   DateTime? releaseDate;
 
+  /// TMDB production status for shows (e.g. "Returning Series", "Ended",
+  /// "In Production", "Planned"). Used to tell a not-yet-aired show apart from a
+  /// currently-airing one when it has no known air date yet.
+  String? status;
+
   /// Whether this item is currently on the user's Trakt watchlist.
   bool onWatchlist;
 
@@ -48,6 +53,7 @@ class MediaItem {
     List<String>? genres,
     this.runtime,
     this.releaseDate,
+    this.status,
     this.onWatchlist = false,
     this.watched = false,
     this.voteCount,
@@ -97,6 +103,7 @@ class MediaItem {
         if (genres.isNotEmpty) 'genres': genres,
         if (runtime != null) 'runtime': runtime,
         if (releaseDate != null) 'releaseDate': releaseDate!.toIso8601String(),
+        if (status != null) 'status': status,
         'onWatchlist': onWatchlist,
         'watched': watched,
         if (voteCount != null) 'voteCount': voteCount,
@@ -113,6 +120,7 @@ class MediaItem {
         genres: (json['genres'] as List<dynamic>?)?.cast<String>(),
         runtime: json['runtime'] as int?,
         releaseDate: parseIsoOrNull(json['releaseDate']),
+        status: json['status'] as String?,
         onWatchlist: json['onWatchlist'] as bool? ?? false,
         watched: json['watched'] as bool? ?? false,
         voteCount: json['voteCount'] as int?,

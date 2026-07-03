@@ -35,9 +35,6 @@ class ShowWatchlistController extends ChangeNotifier {
   /// (re)selection while a fresh copy loads in the background.
   static const _snapshotStore = PrefsCache('show_watchlist_snapshot_v1');
 
-  /// A next episode watched this recently keeps a show in "Recently Watched".
-  static const _recentWindow = Duration(days: 30);
-
   ShowWatchlistState _state = ShowWatchlistState.loading;
   ShowWatchlistState get state => _state;
 
@@ -56,29 +53,45 @@ class ShowWatchlistController extends ChangeNotifier {
 
   bool get isEmpty => _shows.isEmpty;
 
-  /// Shows with an already-aired next episode waiting to be watched, most
-  /// recently aired first.
-  List<WatchlistShow> get newEpisodes {
-    final now = DateTime.now();
-    final out = _shows.where((ws) {
-      final air = ws.nextEpisode?.airDate;
-      return air != null && !air.isAfter(now);
-    }).toList();
-    out.sort((a, b) =>
-        b.nextEpisode!.airDate!.compareTo(a.nextEpisode!.airDate!));
+  /// Shows that haven't premiered yet (no episodes aired), soonest premiere
+  /// first — the next show to start comes first. Shows with no announced date
+  /// yet sink to the bottom, ordered by title.
+  List<WatchlistShow> get comingSoon {
+    final out = _shows.where((ws) => ws.upcoming).toList();
+    out.sort((a, b) {
+      final da = a.releaseDate;
+      final db = b.releaseDate;
+      if (da == null && db == null) return _byTitle(a, b);
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return da.compareTo(db);
+    });
     return out;
   }
 
-  /// Shows watched within the last [_recentWindow], most recently watched first.
-  List<WatchlistShow> get recentlyWatched {
-    final cutoff = DateTime.now().subtract(_recentWindow);
-    final out = _shows
-        .where((ws) =>
-            ws.lastWatchedAt != null && !ws.lastWatchedAt!.isBefore(cutoff))
-        .toList();
-    out.sort((a, b) => b.lastWatchedAt!.compareTo(a.lastWatchedAt!));
+  /// Shows the user has started watching, most recently watched first.
+  List<WatchlistShow> get continueWatching {
+    final out = _shows.where((ws) => ws.hasViews).toList();
+    out.sort((a, b) {
+      final da = a.lastWatchedAt;
+      final db = b.lastWatchedAt;
+      if (da == null && db == null) return _byTitle(a, b);
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return db.compareTo(da);
+    });
     return out;
   }
+
+  /// Shows that have aired episodes but the user hasn't started; alphabetical
+  /// (inherited from [_shows]).
+  List<WatchlistShow> get notStarted =>
+      _shows.where((ws) => !ws.hasViews && !ws.upcoming).toList();
+
+  /// The already-aired episodes still left to watch for [ws], next first.
+  /// Fetched on demand (for the detail dialog), not preloaded.
+  Future<List<NextEpisode>> remainingEpisodes(WatchlistShow ws) =>
+      _enricher.remainingEpisodes(ws.show);
 
   final Set<int> _busyIds = {};
   bool isShowBusy(WatchlistShow ws) =>
@@ -188,6 +201,7 @@ class ShowWatchlistController extends ChangeNotifier {
       if (progress.lastWatchedAt != null) {
         ws.lastWatchedAt = progress.lastWatchedAt;
       }
+      ws.remainingReleased = progress.remainingReleased;
       ws.nextEpisode = progress.nextEpisode != null
           ? await _enricher.buildNextEpisode(ws.show, progress.nextEpisode!)
           : null;

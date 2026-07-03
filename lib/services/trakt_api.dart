@@ -131,6 +131,7 @@ class TraktApi {
     final next = json['next_episode'] as Map<String, dynamic>?;
     return ShowProgress(
       completed: json['completed'] as int? ?? 0,
+      aired: json['aired'] as int? ?? 0,
       lastWatchedAt:
           DateTime.tryParse(json['last_watched_at'] as String? ?? ''),
       nextEpisode: next == null
@@ -142,6 +143,38 @@ class TraktApi {
               traktId: (next['ids'] as Map<String, dynamic>?)?['trakt'] as int?,
             ),
     );
+  }
+
+  /// Per-season watched progress from the same `progress/watched` endpoint as
+  /// [showProgress], but keeping the full season/episode breakdown so callers
+  /// can list the episodes still left to watch. Excludes specials.
+  Future<List<SeasonProgress>> seasonProgress(MediaItem show) async {
+    final id = show.ids.trakt ?? show.ids.slug;
+    if (id == null) return const [];
+
+    final uri = Uri.parse('${AppConfig.traktApiBase}/shows/$id/progress/watched')
+        .replace(queryParameters: {'hidden': 'false', 'specials': 'false'});
+    final res = await _client.get(uri, headers: await _headers());
+    if (res.statusCode != 200) {
+      throw TraktApiException('progress', res.statusCode, res.body);
+    }
+
+    final json = jsonDecode(res.body) as Map<String, dynamic>;
+    final seasons = (json['seasons'] as List<dynamic>?) ?? const [];
+    return [
+      for (final s in seasons.cast<Map<String, dynamic>>())
+        if ((s['number'] as int? ?? 0) != 0)
+          SeasonProgress(
+            number: s['number'] as int? ?? 0,
+            aired: s['aired'] as int? ?? 0,
+            completed: s['completed'] as int? ?? 0,
+            watchedNumbers: {
+              for (final e in (s['episodes'] as List<dynamic>? ?? const [])
+                  .cast<Map<String, dynamic>>())
+                if (e['completed'] == true) e['number'] as int? ?? 0,
+            },
+          ),
+    ];
   }
 
   /// Marks a show's episode watched by show id + season/number (works whether

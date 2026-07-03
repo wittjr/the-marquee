@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/trakt_tokens.dart';
 import '../services/enrichment_cache.dart';
+import '../services/episode_cache.dart';
 import '../services/token_store.dart';
 import '../services/trakt_api.dart';
 import '../services/trakt_auth_service.dart';
@@ -70,6 +71,7 @@ class AuthController extends ChangeNotifier {
       WatchlistMoviesController.clearSnapshot(),
       ShowWatchlistController.clearSnapshot(),
       EnrichmentCache.instance.clear(),
+      EpisodeCache.instance.clear(),
     ]);
     await _store.clear();
     _setStatus(AuthStatus.signedOut);

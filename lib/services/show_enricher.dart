@@ -1,5 +1,6 @@
 import '../models/media_item.dart';
 import '../models/watchlist_show.dart';
+import 'concurrency.dart';
 import 'tmdb_api.dart';
 import 'trakt_api.dart';
 
@@ -20,6 +21,7 @@ class ShowEnricher {
       final progress = await trakt.showProgress(show);
       ws.hasViews = progress.completed > 0 || progress.lastWatchedAt != null;
       ws.lastWatchedAt = progress.lastWatchedAt;
+      ws.remainingReleased = progress.remainingReleased;
       if (progress.nextEpisode != null) {
         ws.nextEpisode = await buildNextEpisode(show, progress.nextEpisode!);
       }
@@ -27,6 +29,50 @@ class ShowEnricher {
       // Best-effort: leave as not-started with no next episode.
     }
     return ws;
+  }
+
+  /// Lists the already-aired episodes the user hasn't watched yet (the next
+  /// episode first), combining Trakt's per-season watched breakdown with TMDB
+  /// titles/stills/air dates. Only seasons with something left are fetched from
+  /// TMDB, so a caught-up show costs a single Trakt call. Best-effort: returns
+  /// what it can and never throws.
+  Future<List<NextEpisode>> remainingEpisodes(MediaItem show) async {
+    final tmdbId = show.ids.tmdb;
+    if (tmdbId == null) return const [];
+    try {
+      final seasons = await trakt.seasonProgress(show);
+      // Skip fully-watched seasons (and unaired ones) before hitting TMDB.
+      final pending = seasons
+          .where((s) => s.aired > 0 && s.completed < s.aired)
+          .toList();
+
+      final now = DateTime.now();
+      final perSeason = await pooledMap(pending, (SeasonProgress s) async {
+        final eps = await tmdb.seasonEpisodes(tmdbId, s.number);
+        return [
+          for (final ep in eps)
+            if (ep.airDate != null &&
+                !ep.airDate!.isAfter(now) &&
+                !s.watchedNumbers.contains(ep.number))
+              NextEpisode(
+                season: s.number,
+                number: ep.number,
+                title: ep.name,
+                overview: ep.overview,
+                stillPath: ep.stillPath,
+                airDate: ep.airDate,
+              ),
+        ];
+      });
+
+      final out = [for (final list in perSeason) ...list];
+      out.sort((a, b) => a.season != b.season
+          ? a.season.compareTo(b.season)
+          : a.number.compareTo(b.number));
+      return out;
+    } catch (_) {
+      return const [];
+    }
   }
 
   /// Combines Trakt's next-episode pointer with TMDB still/title/air date.

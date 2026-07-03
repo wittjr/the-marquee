@@ -7,9 +7,11 @@ import '../config/app_config.dart';
 import '../models/media_item.dart';
 import '../models/movie_details.dart';
 import '../models/movie_filters.dart';
+import '../models/show_details.dart';
 import '../models/trakt_ids.dart';
 import '../models/watchlist_show.dart';
 import 'enrichment_cache.dart';
+import 'episode_cache.dart';
 
 /// Read-only TMDB client used to enrich Trakt items with posters, overviews,
 /// genres, runtime and a meaningful release date.
@@ -128,6 +130,39 @@ class TmdbApi {
     }
   }
 
+  /// All episodes of a season (number, title, still, air date). Served from the
+  /// persistent [EpisodeCache] when fresh, so re-opening the detail dialog costs
+  /// no network. Returns an empty list on any failure so it never breaks the
+  /// detail view.
+  Future<List<TmdbEpisode>> seasonEpisodes(int showTmdbId, int season) async {
+    final cached = await EpisodeCache.instance.get(showTmdbId, season);
+    if (cached != null) return cached;
+    try {
+      final uri = Uri.parse('$_base/tv/$showTmdbId/season/$season')
+          .replace(queryParameters: {'language': 'en-US'});
+      final res = await _client
+          .get(uri, headers: _headers)
+          .timeout(const Duration(seconds: 20));
+      if (res.statusCode != 200) return const [];
+      final j = jsonDecode(res.body) as Map<String, dynamic>;
+      final eps = (j['episodes'] as List<dynamic>?) ?? const [];
+      final list = [
+        for (final e in eps.cast<Map<String, dynamic>>())
+          TmdbEpisode(
+            number: e['episode_number'] as int? ?? 0,
+            name: e['name'] as String?,
+            stillPath: e['still_path'] as String?,
+            airDate: _parseDate(e['air_date'] as String?),
+            overview: e['overview'] as String?,
+          ),
+      ];
+      await EpisodeCache.instance.put(showTmdbId, season, list);
+      return list;
+    } catch (_) {
+      return const [];
+    }
+  }
+
   /// Full details for the movie detail dialog: overview, cast, runtime,
   /// genres, certification, etc.
   Future<MovieDetails> movieDetails(int tmdbId) async {
@@ -144,6 +179,24 @@ class TmdbApi {
       throw Exception('TMDB movie details failed (${res.statusCode})');
     }
     return MovieDetails.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+  }
+
+  /// Full details for the show detail dialog: overview, cast, creators, genres,
+  /// season/episode counts, status, etc.
+  Future<ShowDetails> showDetails(int tmdbId) async {
+    final uri = Uri.parse('$_base/tv/$tmdbId').replace(
+      queryParameters: {
+        'language': 'en-US',
+        'append_to_response': 'credits',
+      },
+    );
+    final res = await _client
+        .get(uri, headers: _headers)
+        .timeout(const Duration(seconds: 20));
+    if (res.statusCode != 200) {
+      throw Exception('TMDB show details failed (${res.statusCode})');
+    }
+    return ShowDetails.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
   }
 
   MediaItem _movieFromDiscover(Map<String, dynamic> r) {
@@ -218,7 +271,11 @@ class TmdbApi {
     // air date for shows that haven't aired yet.
     final lastEp = json['last_episode_to_air'] as Map<String, dynamic>?;
     item.releaseDate = _parseDate(lastEp?['air_date'] as String?) ??
-        _parseDate(json['first_air_date'] as String?);
+        _parseDate(json['first_air_date'] as String?) ??
+        _parseDate(
+            (json['next_episode_to_air'] as Map<String, dynamic>?)?['air_date']
+                as String?);
+    item.status = json['status'] as String?;
   }
 
   void _applyCommon(MediaItem item, Map<String, dynamic> json) {

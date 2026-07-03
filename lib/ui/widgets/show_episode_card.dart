@@ -39,13 +39,22 @@ class ShowEpisodeCard extends StatelessWidget {
           padding: const EdgeInsets.all(8),
           child: Row(
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: SizedBox(
-              width: 124,
-              height: 70,
-              child: _image(ep),
-            ),
+          Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  width: 124,
+                  height: 70,
+                  child: _image(ep),
+                ),
+              ),
+              // Count of already-aired episodes waiting to be watched. Only
+              // shown when there's a backlog (>= 2) — the single next episode is
+              // already represented by the episode line and Watch button.
+              if (show.remainingReleased >= 2)
+                Positioned(top: 4, right: 4, child: _remainingBadge()),
+            ],
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -73,7 +82,16 @@ class ShowEpisodeCard extends StatelessWidget {
                           style: const TextStyle(
                               color: Colors.white54, fontSize: 12)),
                     ),
-                ] else
+                ] else if (show.upcoming)
+                  Text(
+                      show.releaseDate != null
+                          ? 'Starting ${_date(show.releaseDate!)}'
+                          : 'Coming soon',
+                      style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600))
+                else
                   const Text('All caught up',
                       style: TextStyle(
                           color: Color(0xFF4CAF50),
@@ -100,6 +118,28 @@ class ShowEpisodeCard extends StatelessWidget {
       errorWidget: (_, __, ___) => const ColoredBox(
         color: Color(0xFF1C1C22),
         child: Icon(Icons.tv_outlined, color: Colors.white24),
+      ),
+    );
+  }
+
+  /// A small count badge pinned to the thumbnail corner, showing how many
+  /// already-aired episodes are waiting. A translucent scrim keeps the number
+  /// legible over any still image or the fallback tile.
+  Widget _remainingBadge() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        '${show.remainingReleased}',
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          height: 1.0,
+        ),
       ),
     );
   }

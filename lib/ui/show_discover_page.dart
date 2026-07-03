@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../models/media_item.dart';
 import '../state/show_discover_controller.dart';
 import 'widgets/media_card.dart';
+import 'widgets/show_details_dialog.dart';
 
 /// The TV segment of the Discover tab: search Trakt for shows to add to the
 /// watchlist, and — with no active search — browse Trending and Coming Soon
@@ -186,6 +187,13 @@ Widget _card(
   return MediaCard(
     item: item,
     busy: shows.isBusy(item),
+    onTap: () => showDialog(
+      context: context,
+      builder: (_) => ShowDetailsDialog(
+        item: item,
+        onToggleWatchlist: () => shows.toggleWatchlist(item),
+      ),
+    ),
     onToggleWatchlist: () => _run(
       context,
       shows.toggleWatchlist(item),

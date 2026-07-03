@@ -80,10 +80,6 @@ class _HomeView extends StatelessWidget {
               _showList(context, library, library.staleShows,
                   canStopWatching: true),
             ],
-            if (library.notStartedShows.isNotEmpty) ...[
-              _sectionHeader('Not Started'),
-              _showList(context, library, library.notStartedShows),
-            ],
             const SliverToBoxAdapter(child: SizedBox(height: 16)),
           ],
         );
@@ -116,6 +112,7 @@ class _HomeView extends StatelessWidget {
                 context: context,
                 builder: (_) => ShowDetailDialog(
                   show: ws,
+                  loadRemaining: () => library.remainingEpisodes(ws),
                   onWatch: ws.nextEpisode != null
                       ? () => library.markNextEpisodeWatched(ws)
                       : null,

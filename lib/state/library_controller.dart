@@ -318,7 +318,7 @@ class LibraryController extends ChangeNotifier {
     return latest;
   }
 
-  /// Movies are limited to a window from one year ago through one month ahead
+  /// Movies are limited to a window from six months ago through one month ahead
   /// (i.e. recently released or releasing soon); shows are always shown.
   bool _isVisible(MediaItem item) {
     if (item.isShow) return true;
@@ -326,7 +326,7 @@ class LibraryController extends ChangeNotifier {
     if (date == null) return false;
     final now = DateTime.now();
     final upperCutoff = DateTime(now.year, now.month + 1, now.day);
-    final lowerCutoff = DateTime(now.year - 1, now.month, now.day);
+    final lowerCutoff = DateTime(now.year, now.month - 6, now.day);
     return !date.isAfter(upperCutoff) && !date.isBefore(lowerCutoff);
   }
 
@@ -340,6 +340,11 @@ class LibraryController extends ChangeNotifier {
     if (db == null) return -1;
     return db.compareTo(da);
   }
+
+  /// The already-aired episodes still left to watch for [ws], next first.
+  /// Fetched on demand (for the detail dialog), not preloaded.
+  Future<List<NextEpisode>> remainingEpisodes(WatchlistShow ws) =>
+      _enricher.remainingEpisodes(ws.show);
 
   // --- Per-item watchlist / watched mutations ---
 
@@ -371,6 +376,7 @@ class LibraryController extends ChangeNotifier {
       if (progress.lastWatchedAt != null) {
         ws.lastWatchedAt = progress.lastWatchedAt;
       }
+      ws.remainingReleased = progress.remainingReleased;
       ws.nextEpisode = progress.nextEpisode != null
           ? await _enricher.buildNextEpisode(ws.show, progress.nextEpisode!)
           : null;

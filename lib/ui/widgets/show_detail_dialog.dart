@@ -20,12 +20,18 @@ class ShowDetailDialog extends StatefulWidget {
   /// Later list. Closes the dialog on success.
   final Future<void> Function()? onRemoveFromHistory;
 
+  /// Lazily loads the already-aired episodes still left to watch, next first.
+  /// When null (or it returns empty), the dialog falls back to the single known
+  /// next episode.
+  final Future<List<NextEpisode>> Function()? loadRemaining;
+
   const ShowDetailDialog({
     super.key,
     required this.show,
     this.onWatch,
     this.onStopWatching,
     this.onRemoveFromHistory,
+    this.loadRemaining,
   });
 
   @override
@@ -34,6 +40,37 @@ class ShowDetailDialog extends StatefulWidget {
 
 class _ShowDetailDialogState extends State<ShowDetailDialog> {
   bool _busy = false;
+
+  /// Remaining aired episodes; null until loaded.
+  List<NextEpisode>? _remaining;
+  bool _loadingRemaining = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRemaining();
+  }
+
+  Future<void> _loadRemaining() async {
+    final loader = widget.loadRemaining;
+    if (loader == null) return;
+    // Nothing to fetch for a caught-up show.
+    if (widget.show.remainingReleased == 0 && widget.show.nextEpisode == null) {
+      return;
+    }
+    setState(() => _loadingRemaining = true);
+    List<NextEpisode> eps;
+    try {
+      eps = await loader();
+    } catch (_) {
+      eps = const [];
+    }
+    if (!mounted) return;
+    setState(() {
+      _remaining = eps;
+      _loadingRemaining = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -85,27 +122,7 @@ class _ShowDetailDialogState extends State<ShowDetailDialog> {
               ],
             ),
           ],
-          if (ep != null) ...[
-            const SizedBox(height: 16),
-            const Text('Next episode',
-                style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 4),
-            Text(
-              ep.title != null ? '${ep.code} · ${ep.title}' : ep.code,
-              style: const TextStyle(color: Colors.white70),
-            ),
-            if (ep.airDate != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text(_date(ep.airDate!),
-                    style:
-                        const TextStyle(color: Colors.white54, fontSize: 12)),
-              ),
-            if (ep.overview != null && ep.overview!.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(ep.overview!, style: const TextStyle(height: 1.4)),
-            ],
-          ],
+          ..._remainingSection(ep),
           if (show.overview != null && show.overview!.isNotEmpty) ...[
             const SizedBox(height: 16),
             const Text('About the show',
@@ -114,6 +131,115 @@ class _ShowDetailDialogState extends State<ShowDetailDialog> {
             Text(show.overview!, style: const TextStyle(height: 1.4)),
           ],
         ],
+      ),
+    );
+  }
+
+  /// The "Remaining episodes" section: the aired episodes still left to watch.
+  /// Shows a loading row while fetching, the list once loaded, and falls back to
+  /// the single known [next] episode when no list is available.
+  List<Widget> _remainingSection(NextEpisode? next) {
+    final list = _remaining;
+
+    // Loaded a real list — show it (next episode first).
+    if (list != null && list.isNotEmpty) {
+      return [
+        const SizedBox(height: 16),
+        _sectionTitle('Remaining episodes', count: list.length),
+        const SizedBox(height: 8),
+        for (final ep in list) _episodeRow(ep),
+      ];
+    }
+
+    // Still fetching — header + spinner (only when we expect something).
+    if (_loadingRemaining) {
+      return [
+        const SizedBox(height: 16),
+        _sectionTitle('Remaining episodes'),
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 16),
+          child: Center(
+            child: SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+        ),
+      ];
+    }
+
+    // No list available (no loader, or it came back empty) — fall back to the
+    // single next episode we already know about.
+    if (next != null) {
+      return [
+        const SizedBox(height: 16),
+        _sectionTitle('Next episode'),
+        const SizedBox(height: 8),
+        _episodeRow(next),
+      ];
+    }
+
+    return const [];
+  }
+
+  Widget _sectionTitle(String title, {int? count}) {
+    return Text(
+      count != null ? '$title ($count)' : title,
+      style: const TextStyle(fontWeight: FontWeight.bold),
+    );
+  }
+
+  Widget _episodeRow(NextEpisode ep) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _thumb(ep),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  ep.title != null ? '${ep.code} · ${ep.title}' : ep.code,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                if (ep.airDate != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(_date(ep.airDate!),
+                        style: const TextStyle(
+                            color: Colors.white54, fontSize: 12)),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _thumb(NextEpisode ep) {
+    final url = ep.stillUrl;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: SizedBox(
+        width: 96,
+        height: 54,
+        child: url != null
+            ? CachedNetworkImage(
+                imageUrl: url,
+                fit: BoxFit.cover,
+                placeholder: (_, __) =>
+                    const ColoredBox(color: Color(0xFF1C1C22)),
+                errorWidget: (_, __, ___) => const _ThumbFallback(),
+              )
+            : const _ThumbFallback(),
       ),
     );
   }
@@ -218,6 +344,18 @@ class _ShowDetailDialogState extends State<ShowDetailDialog> {
   ];
 
   String _date(DateTime d) => '${_months[d.month - 1]} ${d.day}, ${d.year}';
+}
+
+class _ThumbFallback extends StatelessWidget {
+  const _ThumbFallback();
+
+  @override
+  Widget build(BuildContext context) {
+    return const ColoredBox(
+      color: Color(0xFF1C1C22),
+      child: Icon(Icons.tv_outlined, color: Colors.white24, size: 20),
+    );
+  }
 }
 
 class _Header extends StatelessWidget {

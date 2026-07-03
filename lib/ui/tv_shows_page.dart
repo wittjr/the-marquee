@@ -7,7 +7,8 @@ import 'widgets/show_detail_dialog.dart';
 import 'widgets/show_episode_card.dart';
 
 /// The TV segment of the Watchlist tab: the full show watchlist, split into
-/// New Episodes (an aired episode waiting), Recently Watched, and All Shows.
+/// Coming Soon (not premiered yet), Continue Watching (started), and Not
+/// Started (aired but unwatched).
 ///
 /// Body-only: a [ShowWatchlistController] must be provided above this widget,
 /// and the hosting shell owns the app bar.
@@ -46,10 +47,10 @@ class ShowWatchlistBody extends StatelessWidget {
           child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
-              ..._section(context, shows, 'New Episodes', shows.newEpisodes),
+              ..._section(context, shows, 'Coming Soon', shows.comingSoon),
               ..._section(
-                  context, shows, 'Recently Watched', shows.recentlyWatched),
-              ..._section(context, shows, 'All Shows', shows.allShows),
+                  context, shows, 'Continue Watching', shows.continueWatching),
+              ..._section(context, shows, 'Not Started', shows.notStarted),
               const SliverToBoxAdapter(child: SizedBox(height: 16)),
             ],
           ),
@@ -105,6 +106,7 @@ class ShowWatchlistBody extends StatelessWidget {
         context: context,
         builder: (_) => ShowDetailDialog(
           show: ws,
+          loadRemaining: () => shows.remainingEpisodes(ws),
           onWatch: ws.nextEpisode != null
               ? () => shows.markNextEpisodeWatched(ws)
               : null,
