@@ -17,7 +17,11 @@ import 'widgets/movie_filter_sheet.dart';
 /// Body-only: a [BrowseController] must be provided above this widget, and the
 /// hosting shell owns the app bar (title, filter action, account bar).
 class MovieDiscoverBody extends StatefulWidget {
-  const MovieDiscoverBody({super.key});
+  /// Drives the movie grid so the hosting shell's app-bar title can scroll it
+  /// back to the top when tapped.
+  final ScrollController? scrollController;
+
+  const MovieDiscoverBody({super.key, this.scrollController});
 
   @override
   State<MovieDiscoverBody> createState() => _MovieDiscoverBodyState();
@@ -118,6 +122,7 @@ class _MovieDiscoverBodyState extends State<MovieDiscoverBody> {
       );
     }
     return GridView.builder(
+      controller: widget.scrollController,
       padding: const EdgeInsets.all(16),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 200,
@@ -140,6 +145,7 @@ class _MovieDiscoverBodyState extends State<MovieDiscoverBody> {
         return false;
       },
       child: CustomScrollView(
+        controller: widget.scrollController,
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
           SliverPadding(

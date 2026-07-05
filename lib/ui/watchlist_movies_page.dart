@@ -13,7 +13,11 @@ import 'widgets/movie_detail_dialog.dart';
 /// Body-only: a [WatchlistMoviesController] must be provided above this widget,
 /// and the hosting shell owns the app bar.
 class MovieWatchlistBody extends StatelessWidget {
-  const MovieWatchlistBody({super.key});
+  /// Drives the movie list so the hosting shell's app-bar title can scroll it
+  /// back to the top when tapped.
+  final ScrollController? scrollController;
+
+  const MovieWatchlistBody({super.key, this.scrollController});
 
   @override
   Widget build(BuildContext context) {
@@ -41,6 +45,7 @@ class MovieWatchlistBody extends StatelessWidget {
             controller.movies.where((m) => !m.isReleased).toList();
         final rest = controller.movies.where((m) => m.isReleased).toList();
         return CustomScrollView(
+          controller: scrollController,
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             if (comingSoon.isNotEmpty) ...[

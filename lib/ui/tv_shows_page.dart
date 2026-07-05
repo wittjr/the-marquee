@@ -13,7 +13,11 @@ import 'widgets/show_episode_card.dart';
 /// Body-only: a [ShowWatchlistController] must be provided above this widget,
 /// and the hosting shell owns the app bar.
 class ShowWatchlistBody extends StatelessWidget {
-  const ShowWatchlistBody({super.key});
+  /// Drives the show list so the hosting shell's app-bar title can scroll it
+  /// back to the top when tapped.
+  final ScrollController? scrollController;
+
+  const ShowWatchlistBody({super.key, this.scrollController});
 
   @override
   Widget build(BuildContext context) {
@@ -45,6 +49,7 @@ class ShowWatchlistBody extends StatelessWidget {
         return RefreshIndicator(
           onRefresh: shows.load,
           child: CustomScrollView(
+            controller: scrollController,
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
               ..._section(context, shows, 'Coming Soon', shows.comingSoon),

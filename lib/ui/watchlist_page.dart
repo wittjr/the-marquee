@@ -9,6 +9,7 @@ import 'tv_shows_page.dart';
 import 'watchlist_movies_page.dart';
 import 'widgets/account_bar.dart';
 import 'widgets/library_segment.dart';
+import 'widgets/scroll_to_top_title.dart';
 
 /// The Watchlist tab: what the user is tracking. A Movies / TV segmented control
 /// swaps between the full movie watchlist (Coming Soon + All Movies) and the TV
@@ -42,6 +43,10 @@ class _WatchlistView extends StatefulWidget {
 class _WatchlistViewState extends State<_WatchlistView> {
   var _segment = LibrarySegment.movies;
   ValueNotifier<int>? _tab;
+  // One scroll controller per segment; the app-bar title scrolls whichever
+  // segment is active back to the top.
+  final _moviesScroll = ScrollController();
+  final _showsScroll = ScrollController();
 
   @override
   void initState() {
@@ -69,6 +74,8 @@ class _WatchlistViewState extends State<_WatchlistView> {
   @override
   void dispose() {
     _tab?.removeListener(_onTabChanged);
+    _moviesScroll.dispose();
+    _showsScroll.dispose();
     super.dispose();
   }
 
@@ -76,8 +83,12 @@ class _WatchlistViewState extends State<_WatchlistView> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Watchlist',
-            style: TextStyle(fontWeight: FontWeight.bold)),
+        title: ScrollToTopTitle(
+          'Watchlist',
+          controller: _segment == LibrarySegment.movies
+              ? _moviesScroll
+              : _showsScroll,
+        ),
         actions: const [AccountBarActions()],
         bottom: LibrarySegmentBar(
           selected: _segment,
@@ -86,9 +97,9 @@ class _WatchlistViewState extends State<_WatchlistView> {
       ),
       body: IndexedStack(
         index: _segment.index,
-        children: const [
-          MovieWatchlistBody(),
-          ShowWatchlistBody(),
+        children: [
+          MovieWatchlistBody(scrollController: _moviesScroll),
+          ShowWatchlistBody(scrollController: _showsScroll),
         ],
       ),
     );

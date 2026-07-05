@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../models/trakt_profile.dart';
 import '../state/auth_controller.dart';
 import '../state/profile_controller.dart';
+import 'widgets/scroll_to_top_title.dart';
 
 class ProfilePage extends StatelessWidget {
   const ProfilePage({super.key});
@@ -19,8 +20,21 @@ class ProfilePage extends StatelessWidget {
   }
 }
 
-class _ProfileView extends StatelessWidget {
+class _ProfileView extends StatefulWidget {
   const _ProfileView();
+
+  @override
+  State<_ProfileView> createState() => _ProfileViewState();
+}
+
+class _ProfileViewState extends State<_ProfileView> {
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -29,8 +43,7 @@ class _ProfileView extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title:
-            const Text('Profile', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: ScrollToTopTitle('Profile', controller: _scrollController),
         actions: [
           IconButton(
             tooltip: 'Sign out',
@@ -59,6 +72,7 @@ class _ProfileView extends StatelessWidget {
     final stats = profile.stats;
 
     return ListView(
+      controller: _scrollController,
       padding: const EdgeInsets.all(16),
       children: [
         _ProfileHeader(user: user),

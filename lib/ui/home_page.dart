@@ -11,6 +11,7 @@ import 'widgets/media_card.dart';
 import 'widgets/movie_detail_dialog.dart';
 import 'widgets/movie_row_card.dart';
 import 'widgets/refresh_bar.dart';
+import 'widgets/scroll_to_top_title.dart';
 import 'widgets/show_detail_dialog.dart';
 import 'widgets/show_episode_card.dart';
 import 'widgets/upcoming_episode_card.dart';
@@ -28,8 +29,21 @@ class HomePage extends StatelessWidget {
   }
 }
 
-class _HomeView extends StatelessWidget {
+class _HomeView extends StatefulWidget {
   const _HomeView();
+
+  @override
+  State<_HomeView> createState() => _HomeViewState();
+}
+
+class _HomeViewState extends State<_HomeView> {
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -37,8 +51,7 @@ class _HomeView extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Up Next',
-            style: TextStyle(fontWeight: FontWeight.bold)),
+        title: ScrollToTopTitle('Up Next', controller: _scrollController),
         actions: const [AccountBarActions()],
         bottom: library.isRefreshing ? const RefreshBar() : null,
       ),
@@ -63,6 +76,7 @@ class _HomeView extends StatelessWidget {
           return const _EmptyView();
         }
         return CustomScrollView(
+          controller: _scrollController,
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             if (library.recentShows.isNotEmpty) ...[

@@ -8,6 +8,7 @@ import 'movies_browse_page.dart';
 import 'show_discover_page.dart';
 import 'widgets/account_bar.dart';
 import 'widgets/library_segment.dart';
+import 'widgets/scroll_to_top_title.dart';
 
 /// The Discover tab: find new movies and shows to add to the watchlist. A
 /// Movies / TV segmented control swaps between the movie browse/search body and
@@ -25,6 +26,17 @@ class _DiscoverPageState extends State<DiscoverPage> {
   // The TV discovery rows are loaded lazily the first time that segment shows,
   // so opening Discover doesn't fire the TV requests unless the user asks.
   bool _tvLoaded = false;
+  // One scroll controller per segment; the app-bar title scrolls whichever
+  // segment is active back to the top.
+  final _moviesScroll = ScrollController();
+  final _showsScroll = ScrollController();
+
+  @override
+  void dispose() {
+    _moviesScroll.dispose();
+    _showsScroll.dispose();
+    super.dispose();
+  }
 
   /// [context] must be below the [MultiProvider] (i.e. the Builder's context) so
   /// the TV controller can be read.
@@ -47,8 +59,12 @@ class _DiscoverPageState extends State<DiscoverPage> {
       child: Builder(builder: (context) {
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Discover',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+            title: ScrollToTopTitle(
+              'Discover',
+              controller: _segment == LibrarySegment.movies
+                  ? _moviesScroll
+                  : _showsScroll,
+            ),
             actions: [
               if (_segment == LibrarySegment.movies) const _MovieFilterAction(),
               const AccountBarActions(),
@@ -60,9 +76,9 @@ class _DiscoverPageState extends State<DiscoverPage> {
           ),
           body: IndexedStack(
             index: _segment.index,
-            children: const [
-              MovieDiscoverBody(),
-              ShowDiscoverBody(),
+            children: [
+              MovieDiscoverBody(scrollController: _moviesScroll),
+              ShowDiscoverBody(scrollController: _showsScroll),
             ],
           ),
         );

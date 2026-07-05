@@ -15,7 +15,11 @@ import 'widgets/show_details_dialog.dart';
 /// Body-only: a [ShowDiscoverController] must be provided above this widget, and
 /// the hosting shell owns the app bar.
 class ShowDiscoverBody extends StatefulWidget {
-  const ShowDiscoverBody({super.key});
+  /// Drives the discovery/search scroll view so the hosting shell's app-bar
+  /// title can scroll it back to the top when tapped.
+  final ScrollController? scrollController;
+
+  const ShowDiscoverBody({super.key, this.scrollController});
 
   @override
   State<ShowDiscoverBody> createState() => _ShowDiscoverBodyState();
@@ -77,8 +81,10 @@ class _ShowDiscoverBodyState extends State<ShowDiscoverBody> {
         ),
         Expanded(
           child: shows.query.isNotEmpty
-              ? _SearchResults(shows: shows)
-              : _DiscoverRows(shows: shows),
+              ? _SearchResults(
+                  shows: shows, scrollController: widget.scrollController)
+              : _DiscoverRows(
+                  shows: shows, scrollController: widget.scrollController),
         ),
       ],
     );
@@ -87,7 +93,8 @@ class _ShowDiscoverBodyState extends State<ShowDiscoverBody> {
 
 class _SearchResults extends StatelessWidget {
   final ShowDiscoverController shows;
-  const _SearchResults({required this.shows});
+  final ScrollController? scrollController;
+  const _SearchResults({required this.shows, this.scrollController});
 
   @override
   Widget build(BuildContext context) {
@@ -98,6 +105,7 @@ class _SearchResults extends StatelessWidget {
       return const _Hint(icon: Icons.search_off, message: 'No shows found');
     }
     return GridView.builder(
+      controller: scrollController,
       padding: const EdgeInsets.all(16),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 200,
@@ -113,7 +121,8 @@ class _SearchResults extends StatelessWidget {
 
 class _DiscoverRows extends StatelessWidget {
   final ShowDiscoverController shows;
-  const _DiscoverRows({required this.shows});
+  final ScrollController? scrollController;
+  const _DiscoverRows({required this.shows, this.scrollController});
 
   @override
   Widget build(BuildContext context) {
@@ -129,6 +138,7 @@ class _DiscoverRows extends StatelessWidget {
         return RefreshIndicator(
           onRefresh: shows.load,
           child: CustomScrollView(
+            controller: scrollController,
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
               if (shows.trending.isNotEmpty) ...[
