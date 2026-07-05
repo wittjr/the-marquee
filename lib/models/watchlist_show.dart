@@ -137,8 +137,11 @@ class WatchedShow {
   final MediaItem show;
   final DateTime? lastWatchedAt;
 
-  /// Episodes the user has watched (excluding specials).
-  final int watchedEpisodes;
+  /// Total episode plays for the show (Trakt's `plays`). The watched-shows list
+  /// endpoint no longer returns a per-season episode breakdown, so this is the
+  /// only watched-volume signal available without a per-show progress call. It
+  /// counts rewatches, so it's a heuristic, not a distinct-episode count.
+  final int plays;
 
   /// Total episodes that have aired (from the show's full metadata).
   final int airedEpisodes;
@@ -146,15 +149,19 @@ class WatchedShow {
   const WatchedShow(
     this.show,
     this.lastWatchedAt, {
-    this.watchedEpisodes = 0,
+    this.plays = 0,
     this.airedEpisodes = 0,
   });
 
-  /// True when there are aired episodes the user hasn't watched yet. When the
-  /// aired count is unknown (0), we can't tell, so assume in-progress rather
-  /// than hide a show.
-  bool get inProgress =>
-      airedEpisodes == 0 || watchedEpisodes < airedEpisodes;
+  /// True when the user likely still has aired episodes left to watch — used to
+  /// avoid a per-show progress call for shows they've finished. Compares total
+  /// plays against aired episodes: fewer plays than aired means something's
+  /// left. When the aired count is unknown (0) we can't tell, so assume
+  /// in-progress rather than drop the show. This is a cheap pre-filter; the
+  /// accurate next-episode is still resolved by [ShowEnricher] for kept shows.
+  /// Caveat: heavy rewatching can inflate plays past the aired count and hide a
+  /// genuinely in-progress show — watchlisting it bypasses this path entirely.
+  bool get inProgress => airedEpisodes == 0 || plays < airedEpisodes;
 }
 
 /// Raw watched-progress for a show from Trakt's progress endpoint.

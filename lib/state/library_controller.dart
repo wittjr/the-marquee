@@ -239,9 +239,12 @@ class LibraryController extends ChangeNotifier {
       // Hide shows the user has parked on the "Watch Later" list.
       final traktId = ws.show.ids.trakt;
       if (traktId != null && _watchLaterShowIds.contains(traktId)) continue;
-      // Hide shows you're fully caught up on: watched, with nothing left to
-      // watch (no next episode).
-      if (ws.hasViews && ws.nextEpisode == null) continue;
+      // Hide shows you're fully caught up on: watched, with no aired episodes
+      // left to watch. Trakt's aired−watched count (remainingReleased) is the
+      // source of truth here rather than a resolved next episode — otherwise a
+      // failed/missing TMDB next-episode lookup would make an in-progress show
+      // vanish entirely instead of staying put.
+      if (ws.hasViews && ws.remainingReleased == 0) continue;
 
       // A next episode that aired in the recent past is fresh content to watch,
       // so the show is "just released" even if it's been a while since you
@@ -378,7 +381,8 @@ class LibraryController extends ChangeNotifier {
       }
       ws.remainingReleased = progress.remainingReleased;
       ws.nextEpisode = progress.nextEpisode != null
-          ? await _enricher.buildNextEpisode(ws.show, progress.nextEpisode!)
+          ? await _enricher.buildNextEpisode(ws.show, progress.nextEpisode!,
+              assumeAired: progress.remainingReleased > 0)
           : null;
       _splitShows(_allShows);
       await _saveSnapshot();

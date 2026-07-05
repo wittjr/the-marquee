@@ -203,7 +203,8 @@ class ShowWatchlistController extends ChangeNotifier {
       }
       ws.remainingReleased = progress.remainingReleased;
       ws.nextEpisode = progress.nextEpisode != null
-          ? await _enricher.buildNextEpisode(ws.show, progress.nextEpisode!)
+          ? await _enricher.buildNextEpisode(ws.show, progress.nextEpisode!,
+              assumeAired: progress.remainingReleased > 0)
           : null;
       await _saveSnapshot();
     } finally {

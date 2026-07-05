@@ -223,46 +223,51 @@ class TraktApi {
     final cached = _cachedWatchedShows;
     if (cached != null) return cached;
 
-    // extended=full adds aired_episodes to each show; the per-season watched
-    // episodes are included by default (we don't pass noseasons).
-    final uri = Uri.parse('${AppConfig.traktApiBase}/users/me/watched/shows')
-        .replace(queryParameters: {'extended': 'full'});
-    final res = await _client.get(uri, headers: await _headers());
-    if (res.statusCode != 200) {
-      throw TraktApiException('watched-shows', res.statusCode, res.body);
-    }
-
-    final list = jsonDecode(res.body) as List<dynamic>;
+    // This endpoint is paginated (100/page). We must page through every page —
+    // otherwise watched shows beyond the first 100 silently vanish from the
+    // library (an in-progress show that's slipped past page 1 would never be
+    // discovered). extended=full gives each show's aired_episodes; combined
+    // with the row-level `plays` count it lets callers cheaply pre-filter to
+    // in-progress shows (see [WatchedShow.inProgress]) without a per-show
+    // progress call. Note: this endpoint no longer returns a per-season watched
+    // breakdown, so `plays` is the only watched-volume signal here.
     final shows = <WatchedShow>[];
-    for (final row in list) {
-      final map = row as Map<String, dynamic>;
-      final show = map['show'] as Map<String, dynamic>?;
-      if (show == null) continue;
-
-      // Count watched episodes from the seasons array, skipping specials (0).
-      var watched = 0;
-      final seasons = map['seasons'] as List<dynamic>?;
-      if (seasons != null) {
-        for (final s in seasons) {
-          final season = s as Map<String, dynamic>;
-          if ((season['number'] as int?) == 0) continue;
-          watched += (season['episodes'] as List<dynamic>?)?.length ?? 0;
-        }
+    var page = 1;
+    var pageCount = 1;
+    do {
+      final uri = Uri.parse('${AppConfig.traktApiBase}/users/me/watched/shows')
+          .replace(queryParameters: {
+        'extended': 'full',
+        'page': '$page',
+        'limit': '100',
+      });
+      final res = await _client.get(uri, headers: await _headers());
+      if (res.statusCode != 200) {
+        throw TraktApiException('watched-shows', res.statusCode, res.body);
       }
+      pageCount =
+          int.tryParse(res.headers['x-pagination-page-count'] ?? '') ?? 1;
 
-      shows.add(WatchedShow(
-        MediaItem(
-          type: MediaType.show,
-          title: show['title'] as String? ?? 'Untitled',
-          year: show['year'] as int?,
-          ids: TraktIds.fromJson(
-              show['ids'] as Map<String, dynamic>? ?? const {}),
-        ),
-        DateTime.tryParse(map['last_watched_at'] as String? ?? ''),
-        watchedEpisodes: watched,
-        airedEpisodes: show['aired_episodes'] as int? ?? 0,
-      ));
-    }
+      for (final row in jsonDecode(res.body) as List<dynamic>) {
+        final map = row as Map<String, dynamic>;
+        final show = map['show'] as Map<String, dynamic>?;
+        if (show == null) continue;
+
+        shows.add(WatchedShow(
+          MediaItem(
+            type: MediaType.show,
+            title: show['title'] as String? ?? 'Untitled',
+            year: show['year'] as int?,
+            ids: TraktIds.fromJson(
+                show['ids'] as Map<String, dynamic>? ?? const {}),
+          ),
+          DateTime.tryParse(map['last_watched_at'] as String? ?? ''),
+          plays: map['plays'] as int? ?? 0,
+          airedEpisodes: show['aired_episodes'] as int? ?? 0,
+        ));
+      }
+      page++;
+    } while (page <= pageCount);
 
     _watchedShowsCache = shows;
     _watchedShowsCacheAt = DateTime.now();

@@ -23,7 +23,19 @@ class ShowEnricher {
       ws.lastWatchedAt = progress.lastWatchedAt;
       ws.remainingReleased = progress.remainingReleased;
       if (progress.nextEpisode != null) {
-        ws.nextEpisode = await buildNextEpisode(show, progress.nextEpisode!);
+        // Trakt's aired−watched count is the authority on whether the next
+        // episode has actually aired; when it says episodes remain, trust that
+        // so a missing/failed TMDB lookup can't make the episode disappear.
+        ws.nextEpisode = await buildNextEpisode(show, progress.nextEpisode!,
+            assumeAired: progress.remainingReleased > 0);
+      }
+      // Trakt reports no next_episode pointer in some cases where aired episodes
+      // still remain — e.g. episodes watched out of order, or a gap before the
+      // watched season. Fall back to the per-season breakdown so the show shows
+      // its real next episode instead of being mislabeled "All caught up".
+      if (ws.nextEpisode == null && progress.remainingReleased > 0) {
+        final remaining = await remainingEpisodes(show);
+        if (remaining.isNotEmpty) ws.nextEpisode = remaining.first;
       }
     } catch (_) {
       // Best-effort: leave as not-started with no next episode.
@@ -76,16 +88,31 @@ class ShowEnricher {
   }
 
   /// Combines Trakt's next-episode pointer with TMDB still/title/air date.
-  /// Returns null when the episode has no known air date or hasn't aired yet,
-  /// so unreleased episodes aren't surfaced as something to watch.
+  /// Returns null only when we're confident the episode hasn't aired yet, so
+  /// unreleased episodes aren't surfaced as something to watch.
+  ///
+  /// [assumeAired] should be set when Trakt already reports aired-but-unwatched
+  /// episodes for this show: it means the next episode has aired regardless of
+  /// what TMDB says, so a missing/failed TMDB lookup still yields a usable next
+  /// episode (built from Trakt's raw pointer, minus the still image) rather than
+  /// silently dropping the show. Without it, we only surface episodes TMDB
+  /// confirms have aired.
   Future<NextEpisode?> buildNextEpisode(
-      MediaItem show, RawNextEpisode raw) async {
+      MediaItem show, RawNextEpisode raw,
+      {bool assumeAired = false}) async {
     final tmdbId = show.ids.tmdb;
-    final ep = tmdbId != null
-        ? await tmdb.episodeDetails(tmdbId, raw.season, raw.number)
-        : null;
+    TmdbEpisode? ep;
+    try {
+      if (tmdbId != null) {
+        ep = await tmdb.episodeDetails(tmdbId, raw.season, raw.number);
+      }
+    } catch (_) {
+      // TMDB metadata unavailable; fall back to Trakt's raw pointer below.
+    }
     final airDate = ep?.airDate;
-    if (airDate == null || airDate.isAfter(DateTime.now())) return null;
+    final aired =
+        assumeAired || (airDate != null && !airDate.isAfter(DateTime.now()));
+    if (!aired) return null;
     return NextEpisode(
       season: raw.season,
       number: raw.number,

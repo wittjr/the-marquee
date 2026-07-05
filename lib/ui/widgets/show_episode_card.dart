@@ -82,7 +82,17 @@ class ShowEpisodeCard extends StatelessWidget {
                           style: const TextStyle(
                               color: Colors.white54, fontSize: 12)),
                     ),
-                ] else if (show.upcoming)
+                ] else if (show.remainingReleased > 0)
+                  // No resolved next episode but Trakt reports aired episodes
+                  // left — never claim "All caught up" here.
+                  Text(
+                      '${show.remainingReleased} '
+                      'episode${show.remainingReleased == 1 ? '' : 's'} to watch',
+                      style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600))
+                else if (show.upcoming)
                   Text(
                       show.releaseDate != null
                           ? 'Starting ${_date(show.releaseDate!)}'
