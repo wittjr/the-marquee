@@ -156,7 +156,7 @@ class ShowEpisodeCard extends StatelessWidget {
 
   Widget _watchButton() {
     return SizedBox(
-      width: 96,
+      width: 116,
       height: 40,
       child: FilledButton.icon(
         onPressed: busy ? null : onWatch,
@@ -167,7 +167,7 @@ class ShowEpisodeCard extends StatelessWidget {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             : const Icon(Icons.check_rounded, size: 18),
-        label: Text(busy ? '' : 'Watch'),
+        label: Text(busy ? '' : 'Watched'),
         style: FilledButton.styleFrom(
           backgroundColor: const Color(0xFF2E7D32),
           foregroundColor: Colors.white,

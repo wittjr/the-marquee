@@ -11,8 +11,12 @@ import 'auth_controller.dart';
 enum ShowWatchlistState { loading, ready, error }
 
 /// Backs the TV segment of the Watchlist tab: the user's *full* show watchlist
-/// (watchlist entries plus shows parked on the "Watch Later" list), enriched
-/// with watched progress and the next episode to watch.
+/// (watchlist entries plus shows parked on the "Watch Later" list), plus any
+/// in-progress shows from the user's watched history that aren't on either list,
+/// each enriched with watched progress and the next episode to watch. Folding in
+/// those history-only shows keeps "Continue Watching" a superset of the Up Next
+/// page, so a show the home page drops after six months of inactivity is still
+/// reachable here rather than vanishing entirely.
 ///
 /// The enriched shows are held in one master list ([_shows]); the New Episodes
 /// and Recently Watched rows are computed views over it, so an in-place mutation
@@ -142,8 +146,16 @@ class ShowWatchlistController extends ChangeNotifier {
       // Posters/overview from TMDB, then progress + next episode (bounded).
       await pooledForEach(shows, _tmdb.enrich);
       final built = await pooledMap(shows, _enricher.buildShow);
-      built.sort(_byTitle);
-      _shows = built;
+
+      // Fold in in-progress shows from the user's watched history that aren't on
+      // the watchlist or Watch Later, so Continue Watching mirrors the Up Next
+      // page (LibraryController runs the same merge). Without this, a show you're
+      // watching but never watchlisted — one the home page drops after six months
+      // of inactivity — would disappear from the app entirely. Best-effort.
+      final knownIds = shows.map((e) => e.ids.trakt).whereType<int>().toSet();
+      final extras = await _loadInProgressNotOnWatchlist(knownIds);
+
+      _shows = [...built, ...extras]..sort(_byTitle);
 
       _state = ShowWatchlistState.ready;
       await _saveSnapshot();
@@ -159,6 +171,33 @@ class ShowWatchlistController extends ChangeNotifier {
 
   int _byTitle(WatchlistShow a, WatchlistShow b) =>
       a.show.title.toLowerCase().compareTo(b.show.title.toLowerCase());
+
+  /// Fetches the user's watched shows and keeps those not already known (by
+  /// trakt id) that are still in progress (have aired episodes left to watch).
+  /// Only in-progress shows get a per-show progress call, so a large history of
+  /// finished shows doesn't fan out into hundreds of requests. Mirrors
+  /// [LibraryController]'s merge so Continue Watching stays a superset of Up
+  /// Next. Best-effort: returns empty on failure.
+  Future<List<WatchlistShow>> _loadInProgressNotOnWatchlist(
+      Set<int> knownIds) async {
+    try {
+      final watched = await _trakt.watchedShows();
+      final candidates = watched
+          .where((s) =>
+              s.show.ids.trakt != null &&
+              !knownIds.contains(s.show.ids.trakt) &&
+              s.inProgress)
+          .map((s) => s.show)
+          .toList();
+      // Posters/overview, then progress + next episode (bounded).
+      await pooledForEach(candidates, _tmdb.enrich);
+      final built = await pooledMap(candidates, _enricher.buildShow);
+      // Only keep shows with something left to watch.
+      return built.where((ws) => ws.nextEpisode != null).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
 
   /// Rehydrates the list from the persisted snapshot. Returns true when it
   /// restored something. Never throws.

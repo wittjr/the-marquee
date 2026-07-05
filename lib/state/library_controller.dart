@@ -207,7 +207,16 @@ class LibraryController extends ChangeNotifier {
               s.show.ids.trakt != null &&
               !known.contains(s.show.ids.trakt) &&
               s.inProgress)
-          .map((s) => s.show);
+          .map((s) => s.show)
+          .toList();
+
+      // Enrich with TMDB (posters + most-recent-aired-episode date) before
+      // building, mirroring the watchlist path. Without this these shows carry a
+      // null releaseDate, which breaks recency sorting and, more importantly,
+      // the "abandoned > a year" drop in [_splitShows] — a show last watched
+      // over a year ago whose new season aired recently would be dropped from
+      // Up Next because airedInWindow can't see the (missing) release date.
+      await pooledForEach(inProgress, _tmdb.enrich);
 
       final built = await pooledMap(inProgress, _enricher.buildShow);
       // Only keep shows with something left to watch.
@@ -222,14 +231,28 @@ class LibraryController extends ChangeNotifier {
   static const _staleAfter = Duration(days: 30);
 
   /// Splits shows into three sections: "Recently Watched / Just Released" (has
-  /// views recently OR aired in the last month), "Not watched in a while" (has
-  /// views but not in [_staleAfter], with episodes left), and "Not Started"
+  /// views recently OR aired/premiered in the last six months), "Not watched in
+  /// a while" (has views but not in [_staleAfter], with episodes left, and with
+  /// some watch or airing activity in the last year), and "Not Started"
   /// (the rest, A–Z). A just-released show you haven't started is treated as
   /// recently-released. Upcoming shows that haven't premiered yet are excluded
-  /// entirely — there's nothing to watch, so they only live on the Watchlist tab.
+  /// entirely — there's nothing to watch, so they only live on the Watchlist
+  /// tab. In-progress shows abandoned for over six months (no watch activity
+  /// and no new episode) are likewise dropped from Up Next; they remain under
+  /// "Continue Watching" on the Watchlist → TV page.
   void _splitShows(List<WatchlistShow> shows) {
     final now = DateTime.now();
-    final releasedCutoff = DateTime(now.year, now.month - 1, now.day);
+    // "Just released" content — a freshly aired next episode or a newly
+    // premiered show you haven't started — stays in the Recently Watched /
+    // Just Released section for six months, matching the movie window on the
+    // Up Next page (see [_isVisible]). Independent of both [staleCutoff] (how
+    // recently *you* watched) and [abandonedCutoff] below.
+    final justReleasedCutoff = DateTime(now.year, now.month - 6, now.day);
+    // An in-progress show you've watched stays in "Not watched in a while" for
+    // up to a year of inactivity; with no watch activity AND no newly-aired
+    // episode within that window it drops off Up Next entirely (it stays under
+    // Continue Watching on the Watchlist → TV page).
+    final abandonedCutoff = DateTime(now.year - 1, now.month, now.day);
     final staleCutoff = now.subtract(_staleAfter);
 
     final recent = <WatchlistShow>[];
@@ -251,7 +274,7 @@ class LibraryController extends ChangeNotifier {
       // watched. A *future* air date isn't watchable yet, so it doesn't count.
       final nextAir = ws.nextEpisode?.airDate;
       final freshEpisode = nextAir != null &&
-          nextAir.isAfter(staleCutoff) &&
+          nextAir.isAfter(justReleasedCutoff) &&
           !nextAir.isAfter(now);
 
       if (ws.hasViews) {
@@ -261,13 +284,26 @@ class LibraryController extends ChangeNotifier {
         if (watchedRecently || freshEpisode) {
           recent.add(ws);
         } else {
-          stale.add(ws);
+          // "Not watched in a while" is bounded to a year: a show with no watch
+          // activity AND no newly-aired episode in that window is dropped from
+          // Up Next entirely. It still lives under "Continue Watching" on the
+          // Watchlist → TV page, so it isn't lost — it just stops nagging.
+          // [releaseDate] is the most recently aired episode, so it catches new
+          // episodes even when you're several episodes behind (an old next
+          // episode air date).
+          final airedInWindow = ws.releaseDate != null &&
+              ws.releaseDate!.isAfter(abandonedCutoff);
+          final watchedInWindow =
+              lastWatched != null && lastWatched.isAfter(abandonedCutoff);
+          if (airedInWindow || watchedInWindow) {
+            stale.add(ws);
+          }
         }
       } else {
         // No episodes watched yet. "Just released" is bounded to the recent
         // past so a future premiere date doesn't qualify.
         final releasedRecently = ws.releaseDate != null &&
-            ws.releaseDate!.isAfter(releasedCutoff) &&
+            ws.releaseDate!.isAfter(justReleasedCutoff) &&
             !ws.releaseDate!.isAfter(now);
         if (freshEpisode || releasedRecently) {
           recent.add(ws);

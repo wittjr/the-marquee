@@ -8,6 +8,7 @@ import '../models/watchlist_show.dart';
 import 'widgets/account_bar.dart';
 import 'widgets/media_card.dart';
 import 'widgets/movie_detail_dialog.dart';
+import 'widgets/movie_row_card.dart';
 import 'widgets/refresh_bar.dart';
 import 'widgets/show_detail_dialog.dart';
 import 'widgets/show_episode_card.dart';
@@ -62,14 +63,6 @@ class _HomeView extends StatelessWidget {
         return CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
-            if (library.upcomingMovies.isNotEmpty) ...[
-              _sectionHeader('Upcoming Movies'),
-              _grid(context, library, library.upcomingMovies),
-            ],
-            if (library.movies.isNotEmpty) ...[
-              _sectionHeader('Movies'),
-              _grid(context, library, library.movies),
-            ],
             if (library.recentShows.isNotEmpty) ...[
               _sectionHeader('Recently Watched / Just Released'),
               _showList(context, library, library.recentShows,
@@ -79,6 +72,14 @@ class _HomeView extends StatelessWidget {
               _sectionHeader('Not watched in a while'),
               _showList(context, library, library.staleShows,
                   canStopWatching: true),
+            ],
+            if (library.movies.isNotEmpty) ...[
+              _sectionHeader('Movies'),
+              _movieList(context, library, library.movies),
+            ],
+            if (library.upcomingMovies.isNotEmpty) ...[
+              _sectionHeader('Upcoming Movies'),
+              _grid(context, library, library.upcomingMovies),
             ],
             const SliverToBoxAdapter(child: SizedBox(height: 16)),
           ],
@@ -124,6 +125,47 @@ class _HomeView extends StatelessWidget {
             );
           },
           childCount: shows.length,
+        ),
+      ),
+    );
+  }
+
+  /// Renders the Movies section as compact full-width rows (matching the show
+  /// rows) instead of poster tiles, to save vertical space.
+  Widget _movieList(
+    BuildContext context,
+    LibraryController library,
+    List<MediaItem> items,
+  ) {
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      sliver: SliverList(
+        delegate: SliverChildBuilderDelegate(
+          (context, i) {
+            final item = items[i];
+            return MovieRowCard(
+              item: item,
+              busy: library.isBusy(item),
+              onWatched: item.isReleased
+                  ? () => _run(
+                        context,
+                        library.markWatched(item),
+                        'Marked “${item.title}” watched',
+                      )
+                  : null,
+              onTap: () => showDialog(
+                context: context,
+                builder: (_) => MovieDetailDialog(
+                  item: item,
+                  onToggleWatchlist: () => library.removeFromWatchlist(item),
+                  closeOnWatchlist: true,
+                  onWatched:
+                      item.isReleased ? () => library.markWatched(item) : null,
+                ),
+              ),
+            );
+          },
+          childCount: items.length,
         ),
       ),
     );
