@@ -133,8 +133,17 @@ class TraktApi {
       page++;
     } while (page <= pageCount);
 
-    // Trakt returns rows in air order, but paging can interleave; sort to be safe.
-    entries.sort((a, b) => a.airsAt.compareTo(b.airsAt));
+    // Trakt returns rows in air order, but paging can interleave; sort to be
+    // safe. Break ties on same-day/same-time airings by season then episode
+    // number so the earliest episode wins — otherwise the unstable sort can
+    // leave a later episode first, and per-show dedup would keep the wrong one.
+    entries.sort((a, b) {
+      final byTime = a.airsAt.compareTo(b.airsAt);
+      if (byTime != 0) return byTime;
+      final bySeason = a.season.compareTo(b.season);
+      if (bySeason != 0) return bySeason;
+      return a.number.compareTo(b.number);
+    });
     return entries;
   }
 
