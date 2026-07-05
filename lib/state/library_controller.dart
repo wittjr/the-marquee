@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../models/calendar_entry.dart';
 import '../models/media_item.dart';
 import '../models/watchlist_show.dart';
 import '../services/concurrency.dart';
@@ -75,6 +76,12 @@ class LibraryController extends ChangeNotifier {
   List<WatchlistShow> _notStartedShows = const [];
   List<WatchlistShow> get notStartedShows => _notStartedShows;
 
+  /// Upcoming episodes of the user's shows, from Trakt's personalized calendar;
+  /// soonest air date first. Populated best-effort, independent of the watchlist
+  /// sections above.
+  List<CalendarEntry> _upcomingEpisodes = const [];
+  List<CalendarEntry> get upcomingEpisodes => _upcomingEpisodes;
+
   /// The full set of shows behind the three sections above, kept so a per-item
   /// mutation (marking an episode watched, stopping a show) can re-bucket the
   /// sections in place without waiting for the next network reload.
@@ -84,7 +91,8 @@ class LibraryController extends ChangeNotifier {
       _items.isEmpty &&
       _recentShows.isEmpty &&
       _staleShows.isEmpty &&
-      _notStartedShows.isEmpty;
+      _notStartedShows.isEmpty &&
+      _upcomingEpisodes.isEmpty;
 
   Future<void> load() async {
     // On the first load, paint the persisted snapshot immediately and refresh
@@ -126,6 +134,9 @@ class LibraryController extends ChangeNotifier {
       _allShows = [...watchlistShows, ...extraShows];
       _splitShows(_allShows);
 
+      // Upcoming episodes from Trakt's personalized calendar (best-effort).
+      _upcomingEpisodes = await _loadUpcomingEpisodes();
+
       _state = LoadState.ready;
       await _saveSnapshot();
     } catch (e) {
@@ -149,6 +160,7 @@ class LibraryController extends ChangeNotifier {
       _recentShows = _showsFrom(data['recent']);
       _staleShows = _showsFrom(data['stale']);
       _notStartedShows = _showsFrom(data['notStarted']);
+      _upcomingEpisodes = _calendarFrom(data['upcoming']);
       _allShows = [..._recentShows, ..._staleShows, ..._notStartedShows];
       return !isEmpty;
     } catch (_) {
@@ -161,6 +173,7 @@ class LibraryController extends ChangeNotifier {
         'recent': _recentShows.map((e) => e.toJson()).toList(),
         'stale': _staleShows.map((e) => e.toJson()).toList(),
         'notStarted': _notStartedShows.map((e) => e.toJson()).toList(),
+        'upcoming': _upcomingEpisodes.map((e) => e.toJson()).toList(),
       });
 
   static List<MediaItem> _mediaFrom(Object? raw) => ((raw as List?) ?? const [])
@@ -170,6 +183,11 @@ class LibraryController extends ChangeNotifier {
   static List<WatchlistShow> _showsFrom(Object? raw) =>
       ((raw as List?) ?? const [])
           .map((e) => WatchlistShow.fromJson((e as Map).cast<String, dynamic>()))
+          .toList();
+
+  static List<CalendarEntry> _calendarFrom(Object? raw) =>
+      ((raw as List?) ?? const [])
+          .map((e) => CalendarEntry.fromJson((e as Map).cast<String, dynamic>()))
           .toList();
 
   /// Clears the persisted home snapshot (e.g. on sign-out).
@@ -221,6 +239,38 @@ class LibraryController extends ChangeNotifier {
       final built = await pooledMap(inProgress, _enricher.buildShow);
       // Only keep shows with something left to watch.
       return built.where((ws) => ws.nextEpisode != null).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// How far ahead the upcoming-episodes calendar looks.
+  static const _calendarWindowDays = 30;
+
+  /// Fetches the user's upcoming episodes from Trakt's calendar, keeping only
+  /// the soonest episode per show (to save vertical space), and enriches each
+  /// show with a TMDB poster. Best-effort: returns empty on failure so a
+  /// calendar hiccup never blocks the rest of the page.
+  Future<List<CalendarEntry>> _loadUpcomingEpisodes() async {
+    try {
+      final entries =
+          await _trakt.upcomingEpisodes(days: _calendarWindowDays);
+      // Entries arrive sorted soonest-first, so the first one seen for a show is
+      // its next episode; keep that and drop the rest. Shows with no trakt id
+      // (shouldn't happen from the calendar) are kept as-is.
+      final soonestByShow = <int, CalendarEntry>{};
+      final next = <CalendarEntry>[];
+      for (final e in entries) {
+        final id = e.show.ids.trakt;
+        if (id == null) {
+          next.add(e);
+        } else if (!soonestByShow.containsKey(id)) {
+          soonestByShow[id] = e;
+          next.add(e);
+        }
+      }
+      await pooledForEach(next.map((e) => e.show), _tmdb.enrich);
+      return next;
     } catch (_) {
       return const [];
     }

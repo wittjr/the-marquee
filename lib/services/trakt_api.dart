@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../config/app_config.dart';
+import '../models/calendar_entry.dart';
 import '../models/media_item.dart';
 import '../models/trakt_ids.dart';
 import '../models/trakt_profile.dart';
@@ -94,6 +95,54 @@ class TraktApi {
     _watchlistCacheAt = DateTime.now();
     return items;
   }
+
+  /// Upcoming episodes of the shows the user follows (watchlist / collection /
+  /// watch history), from Trakt's personalized calendar. Returns per-episode
+  /// rows sorted soonest-first, spanning [days] starting today.
+  ///
+  /// The calendar is not one of the briefly-cached membership lists — it's a
+  /// distinct, time-windowed view, so it's fetched fresh each call. Paginated
+  /// like the other list endpoints; we page through all results. `extended=full`
+  /// pulls each episode's overview so cards can render without a follow-up call.
+  Future<List<CalendarEntry>> upcomingEpisodes({int days = 30}) async {
+    final start = _dateOnly(DateTime.now());
+    final entries = <CalendarEntry>[];
+    var page = 1;
+    var pageCount = 1;
+
+    do {
+      final uri = Uri.parse(
+              '${AppConfig.traktApiBase}/calendars/my/shows/$start/$days')
+          .replace(queryParameters: {
+        'extended': 'full',
+        'page': '$page',
+        'limit': '100',
+      });
+      final res = await _client.get(uri, headers: await _headers());
+      if (res.statusCode != 200) {
+        throw TraktApiException('calendar', res.statusCode, res.body);
+      }
+
+      final list = jsonDecode(res.body) as List<dynamic>;
+      entries.addAll(list
+          .whereType<Map<String, dynamic>>()
+          .map(CalendarEntry.fromTrakt));
+
+      pageCount =
+          int.tryParse(res.headers['x-pagination-page-count'] ?? '1') ?? 1;
+      page++;
+    } while (page <= pageCount);
+
+    // Trakt returns rows in air order, but paging can interleave; sort to be safe.
+    entries.sort((a, b) => a.airsAt.compareTo(b.airsAt));
+    return entries;
+  }
+
+  /// Formats a [DateTime] as the `YYYY-MM-DD` start date the calendar expects.
+  static String _dateOnly(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-'
+      '${d.month.toString().padLeft(2, '0')}-'
+      '${d.day.toString().padLeft(2, '0')}';
 
   /// TMDB ids of every movie the user has watched (full watched set, not the
   /// paginated history). Used to hide watched movies from the browse list.

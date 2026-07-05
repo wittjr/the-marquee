@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/calendar_entry.dart';
 import '../models/media_item.dart';
 import '../state/auth_controller.dart';
 import '../state/library_controller.dart';
@@ -12,6 +13,7 @@ import 'widgets/movie_row_card.dart';
 import 'widgets/refresh_bar.dart';
 import 'widgets/show_detail_dialog.dart';
 import 'widgets/show_episode_card.dart';
+import 'widgets/upcoming_episode_card.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -76,6 +78,10 @@ class _HomeView extends StatelessWidget {
             if (library.movies.isNotEmpty) ...[
               _sectionHeader('Movies'),
               _movieList(context, library, library.movies),
+            ],
+            if (library.upcomingEpisodes.isNotEmpty) ...[
+              _sectionHeader('Upcoming Episodes'),
+              _upcomingEpisodeList(context, library.upcomingEpisodes),
             ],
             if (library.upcomingMovies.isNotEmpty) ...[
               _sectionHeader('Upcoming Movies'),
@@ -170,6 +176,50 @@ class _HomeView extends StatelessWidget {
       ),
     );
   }
+
+  /// Renders the Upcoming Episodes section as compact full-width rows (matching
+  /// the show/movie rows). These haven't aired yet, so the rows carry no inline
+  /// action; tapping opens the read-only show detail dialog.
+  Widget _upcomingEpisodeList(
+    BuildContext context,
+    List<CalendarEntry> entries,
+  ) {
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      sliver: SliverList(
+        delegate: SliverChildBuilderDelegate(
+          (context, i) {
+            final entry = entries[i];
+            return UpcomingEpisodeCard(
+              entry: entry,
+              onTap: () => showDialog(
+                context: context,
+                // No Watch / Stop / Remove actions — the episode is in the
+                // future, so the dialog is purely informational here.
+                builder: (_) => ShowDetailDialog(show: _asWatchlistShow(entry)),
+              ),
+            );
+          },
+          childCount: entries.length,
+        ),
+      ),
+    );
+  }
+
+  /// Adapts a calendar entry to the [WatchlistShow] the detail dialog expects,
+  /// surfacing its upcoming episode as the "next episode" (with air date) so the
+  /// dialog renders from already-loaded data without a fetch.
+  WatchlistShow _asWatchlistShow(CalendarEntry entry) => WatchlistShow(
+        show: entry.show,
+        nextEpisode: NextEpisode(
+          season: entry.season,
+          number: entry.number,
+          title: entry.episodeTitle,
+          overview: entry.overview,
+          airDate: entry.airsAt,
+          traktId: entry.episodeTraktId,
+        ),
+      );
 
   Widget _sectionHeader(String title) {
     return SliverToBoxAdapter(
