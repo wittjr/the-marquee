@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../config/app_config.dart';
@@ -9,6 +10,7 @@ import '../models/trakt_ids.dart';
 import '../models/trakt_profile.dart';
 import '../models/watchlist_show.dart';
 import '../state/auth_controller.dart';
+import 'trakt_rate_limit.dart';
 
 /// Authenticated client for the Trakt REST API. Pulls a valid access token from
 /// [AuthController] on each call (which refreshes transparently when needed).
@@ -17,7 +19,13 @@ class TraktApi {
   final http.Client _client;
 
   TraktApi(this._auth, [http.Client? client])
-      : _client = client ?? http.Client();
+      : _client = _RateLimitClient(client ?? http.Client());
+
+  /// The most recent `X-Ratelimit` snapshot seen on any Trakt response, shared
+  /// across all instances so the UI can display the remaining call budget.
+  /// Updated automatically by [_RateLimitClient] on every request.
+  static final ValueNotifier<TraktRateLimit?> rateLimit =
+      ValueNotifier<TraktRateLimit?>(null);
 
   // --- Short-lived shared cache for the two membership-list endpoints, so
   // switching tabs (each with its own controller/TraktApi) doesn't refetch
@@ -597,4 +605,86 @@ class TraktApiException implements Exception {
   @override
   String toString() =>
       'TraktApiException($endpoint): HTTP $statusCode — $body';
+}
+
+/// Wraps the underlying HTTP client so every Trakt GET updates
+/// [TraktApi.rateLimit], without each endpoint method having to track it.
+///
+/// Trakt only emits the `X-Ratelimit` header on `429` responses (never on
+/// successful calls), so a live "remaining" figure usually isn't available.
+/// Between those, we estimate the budget by counting our own GETs (see
+/// [_RateLimitTracker]). Whenever Trakt *does* report the GET bucket
+/// authoritatively, we adopt it and re-baseline the estimator to match, so the
+/// corrected value carries forward instead of being overwritten by the estimate.
+class _RateLimitClient extends http.BaseClient {
+  final http.Client _inner;
+  _RateLimitClient(this._inner);
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final res = await _inner.send(request);
+
+    // Authoritative data can ride on any method's response (typically a 429),
+    // but only adopt it when it describes the GET budget we're displaying.
+    final reported = TraktRateLimit.parse(res.headers['x-ratelimit']);
+    if (reported != null && reported.isGetBucket) {
+      _RateLimitTracker.reconcile(reported);
+      TraktApi.rateLimit.value = reported;
+    } else if (request.method == 'GET') {
+      TraktApi.rateLimit.value = _RateLimitTracker.recordGet();
+    }
+    return res;
+  }
+
+  @override
+  void close() => _inner.close();
+}
+
+/// Estimates the remaining Trakt GET budget by counting calls this app makes
+/// within a clock-aligned window. Not authoritative — it can't see calls made
+/// by other devices on the same account — but good enough to warn when the
+/// budget is running low. [reconcile] snaps it back to Trakt's real numbers
+/// whenever the API reports them.
+class _RateLimitTracker {
+  /// Trakt's authenticated GET limit: 1000 calls per 5-minute window.
+  static const _defaultLimit = 1000;
+  static const _window = Duration(minutes: 5);
+
+  static int _limit = _defaultLimit;
+  static int _count = 0;
+  static DateTime? _windowEnd;
+
+  /// Records one GET and returns the updated (estimated) budget snapshot.
+  static TraktRateLimit recordGet() {
+    final now = DateTime.now().toUtc();
+    // Roll into a fresh clock-aligned window once the current one has elapsed.
+    if (_windowEnd == null || !now.isBefore(_windowEnd!)) {
+      _windowEnd = _floorToWindow(now).add(_window);
+      _count = 0;
+      _limit = _defaultLimit;
+    }
+    _count++;
+    return TraktRateLimit(
+      name: 'estimate',
+      limit: _limit,
+      remaining: (_limit - _count).clamp(0, _limit),
+      period: _window.inSeconds,
+      until: _windowEnd!,
+    );
+  }
+
+  /// Re-baselines the estimator to an authoritative snapshot so subsequent
+  /// estimates continue from Trakt's real count rather than snapping back.
+  static void reconcile(TraktRateLimit rl) {
+    _limit = rl.limit;
+    _count = (rl.limit - rl.remaining).clamp(0, rl.limit);
+    _windowEnd = rl.until;
+  }
+
+  /// Floors a timestamp to the start of its [_window]-aligned window.
+  static DateTime _floorToWindow(DateTime t) {
+    final minutes = _window.inMinutes;
+    return DateTime.utc(
+        t.year, t.month, t.day, t.hour, t.minute - (t.minute % minutes));
+  }
 }

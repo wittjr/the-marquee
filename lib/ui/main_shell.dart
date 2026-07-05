@@ -5,6 +5,7 @@ import 'discover_page.dart';
 import 'home_page.dart';
 import 'profile_page.dart';
 import 'watchlist_page.dart';
+import 'widgets/rate_limit_indicator.dart';
 
 /// Root shell shown once signed in: a bottom navigation bar switching between
 /// the Up Next dashboard, Discover (movies + TV), Watchlist (movies + TV) and
@@ -51,25 +52,29 @@ class _MainShellState extends State<MainShell> {
           bottomNavigationBar: NavigationBar(
             selectedIndex: index,
             onDestinationSelected: (i) => _index.value = i,
-            destinations: const [
-              NavigationDestination(
+            destinations: [
+              const NavigationDestination(
                 icon: Icon(Icons.upcoming_outlined),
                 selectedIcon: Icon(Icons.upcoming),
                 label: 'Up Next',
               ),
-              NavigationDestination(
+              const NavigationDestination(
                 icon: Icon(Icons.search_outlined),
                 selectedIcon: Icon(Icons.search),
                 label: 'Discover',
               ),
-              NavigationDestination(
+              const NavigationDestination(
                 icon: Icon(Icons.bookmarks_outlined),
                 selectedIcon: Icon(Icons.bookmarks),
                 label: 'Watchlist',
               ),
               NavigationDestination(
-                icon: Icon(Icons.person_outline),
-                selectedIcon: Icon(Icons.person),
+                // The Trakt rate-limit badges (remaining calls + reset
+                // countdown) ride on the Profile icon.
+                icon: const RateLimitBadges(
+                    child: Icon(Icons.person_outline)),
+                selectedIcon:
+                    const RateLimitBadges(child: Icon(Icons.person)),
                 label: 'Profile',
               ),
             ],
