@@ -79,8 +79,24 @@ class LibraryController extends ChangeNotifier {
   /// Upcoming episodes of the user's shows, from Trakt's personalized calendar;
   /// soonest air date first. Populated best-effort, independent of the watchlist
   /// sections above.
+  ///
+  /// An entry whose episode has already aired is dropped once its show appears
+  /// under "Recently Watched / Just Released" — the freshly-aired episode now
+  /// surfaces there as the show's next episode, so keeping it here would be a
+  /// duplicate. (Entries can be past-dated between refreshes via the persisted
+  /// snapshot.)
   List<CalendarEntry> _upcomingEpisodes = const [];
-  List<CalendarEntry> get upcomingEpisodes => _upcomingEpisodes;
+  List<CalendarEntry> get upcomingEpisodes {
+    final now = DateTime.now();
+    final recentIds = _recentShows
+        .map((ws) => ws.show.ids.trakt)
+        .whereType<int>()
+        .toSet();
+    return _upcomingEpisodes
+        .where((e) =>
+            e.airsAt.isAfter(now) || !recentIds.contains(e.show.ids.trakt))
+        .toList(growable: false);
+  }
 
   /// The full set of shows behind the three sections above, kept so a per-item
   /// mutation (marking an episode watched, stopping a show) can re-bucket the

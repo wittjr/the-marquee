@@ -66,10 +66,37 @@ class UpcomingEpisodeCard extends StatelessWidget {
                   ],
                 ),
               ),
+              const SizedBox(width: 12),
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: _daysBadge(),
+              ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  /// Right-aligned countdown: the day count over a "days" caption, or "Today"
+  /// / "Aired" when a count doesn't apply.
+  Widget _daysBadge() {
+    final days = _daysUntilAir;
+    if (days <= 0) {
+      return Text(
+        days == 0 ? 'Today' : 'Aired',
+        style: const TextStyle(color: Colors.white54, fontSize: 12),
+      );
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('$days',
+            style:
+                const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+        Text(days == 1 ? 'day' : 'days',
+            style: const TextStyle(color: Colors.white54, fontSize: 11)),
+      ],
     );
   }
 
@@ -95,14 +122,21 @@ class UpcomingEpisodeCard extends StatelessWidget {
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
   ];
 
-  /// A friendly air line: "Today", "Tomorrow", or "Mon, Jul 8" for dates within
-  /// the week, otherwise "Jul 8, 2026". A season premiere is flagged.
-  String get _airLine {
+  /// Whole calendar days from today until the air date (0 = today, negative =
+  /// already aired).
+  int get _daysUntilAir {
     final d = entry.airsAt;
     final now = DateTime.now();
     final airDay = DateTime(d.year, d.month, d.day);
     final today = DateTime(now.year, now.month, now.day);
-    final days = airDay.difference(today).inDays;
+    return airDay.difference(today).inDays;
+  }
+
+  /// A friendly air line: "Today", "Tomorrow", or "Mon, Jul 8" for dates within
+  /// the week, otherwise "Jul 8, 2026". A season premiere is flagged.
+  String get _airLine {
+    final d = entry.airsAt;
+    final days = _daysUntilAir;
 
     String label;
     if (days == 0) {
