@@ -34,7 +34,8 @@ class ShowEnricher {
       // watched season. Fall back to the per-season breakdown so the show shows
       // its real next episode instead of being mislabeled "All caught up".
       if (ws.nextEpisode == null && progress.remainingReleased > 0) {
-        final remaining = await remainingEpisodes(show);
+        final remaining =
+            (await remainingEpisodes(show)).where((e) => !e.watched);
         if (remaining.isNotEmpty) ws.nextEpisode = remaining.first;
       }
     } catch (_) {
@@ -43,11 +44,14 @@ class ShowEnricher {
     return ws;
   }
 
-  /// Lists the already-aired episodes the user hasn't watched yet (the next
-  /// episode first), combining Trakt's per-season watched breakdown with TMDB
-  /// titles/stills/air dates. Only seasons with something left are fetched from
-  /// TMDB, so a caught-up show costs a single Trakt call. Best-effort: returns
-  /// what it can and never throws.
+  /// Lists the already-aired episodes of every in-progress season (next first),
+  /// combining Trakt's per-season watched breakdown with TMDB titles/stills/air
+  /// dates. Each episode carries [NextEpisode.watched] so callers can show a
+  /// watched indicator alongside the ones still left to watch. Only seasons
+  /// with something left are fetched from TMDB — a fully-watched season is
+  /// skipped entirely (its episodes stay off the list) so a caught-up show
+  /// costs a single Trakt call and finished seasons don't balloon the TMDB
+  /// fan-out. Best-effort: returns what it can and never throws.
   Future<List<NextEpisode>> remainingEpisodes(MediaItem show) async {
     final tmdbId = show.ids.tmdb;
     if (tmdbId == null) return const [];
@@ -63,9 +67,7 @@ class ShowEnricher {
         final eps = await tmdb.seasonEpisodes(tmdbId, s.number);
         return [
           for (final ep in eps)
-            if (ep.airDate != null &&
-                !ep.airDate!.isAfter(now) &&
-                !s.watchedNumbers.contains(ep.number))
+            if (ep.airDate != null && !ep.airDate!.isAfter(now))
               NextEpisode(
                 season: s.number,
                 number: ep.number,
@@ -73,6 +75,7 @@ class ShowEnricher {
                 overview: ep.overview,
                 stillPath: ep.stillPath,
                 airDate: ep.airDate,
+                watched: s.watchedNumbers.contains(ep.number),
               ),
         ];
       });

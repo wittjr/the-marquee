@@ -137,6 +137,7 @@ class _HomeViewState extends State<_HomeView> {
                   onWatch: ws.nextEpisode != null
                       ? () => library.markNextEpisodeWatched(ws)
                       : null,
+                  onWatchEpisode: (ep) => library.markEpisodeWatched(ws, ep),
                   onStopWatching:
                       canStopWatching ? () => library.stopWatching(ws) : null,
                   onRemoveFromHistory: () => library.removeFromHistory(ws),

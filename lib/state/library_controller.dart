@@ -463,10 +463,16 @@ class LibraryController extends ChangeNotifier {
 
   /// Marks the show's next episode watched, then advances [ws] to the new next
   /// episode (or caught-up) and re-buckets the sections in place.
-  Future<void> markNextEpisodeWatched(WatchlistShow ws) async {
+  Future<void> markNextEpisodeWatched(WatchlistShow ws) {
     final ep = ws.nextEpisode;
-    if (ep == null) return;
+    if (ep == null) return Future.value();
+    return markEpisodeWatched(ws, ep);
+  }
 
+  /// Marks [ep] watched — the next episode or any other already-aired episode
+  /// surfaced by [remainingEpisodes] — then syncs [ws]'s progress fields in
+  /// place and re-buckets the sections.
+  Future<void> markEpisodeWatched(WatchlistShow ws, NextEpisode ep) async {
     final busyId = ws.show.ids.trakt;
     if (busyId != null) {
       _busyIds.add(busyId);
@@ -482,10 +488,19 @@ class LibraryController extends ChangeNotifier {
         ws.lastWatchedAt = progress.lastWatchedAt;
       }
       ws.remainingReleased = progress.remainingReleased;
-      ws.nextEpisode = progress.nextEpisode != null
+      var next = progress.nextEpisode != null
           ? await _enricher.buildNextEpisode(ws.show, progress.nextEpisode!,
               assumeAired: progress.remainingReleased > 0)
           : null;
+      // Trakt can omit next_episode after an out-of-order watch even though
+      // aired episodes remain (e.g. an earlier gap); fall back to the
+      // per-season breakdown so the show doesn't look falsely caught up.
+      if (next == null && progress.remainingReleased > 0) {
+        final remaining =
+            (await _enricher.remainingEpisodes(ws.show)).where((e) => !e.watched);
+        if (remaining.isNotEmpty) next = remaining.first;
+      }
+      ws.nextEpisode = next;
       _splitShows(_allShows);
       await _saveSnapshot();
     } finally {

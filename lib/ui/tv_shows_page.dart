@@ -115,6 +115,7 @@ class ShowWatchlistBody extends StatelessWidget {
           onWatch: ws.nextEpisode != null
               ? () => shows.markNextEpisodeWatched(ws)
               : null,
+          onWatchEpisode: (ep) => shows.markEpisodeWatched(ws, ep),
           onRemoveFromHistory: () => shows.removeFromHistory(ws),
         ),
       ),

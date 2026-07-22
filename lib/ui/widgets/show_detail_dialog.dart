@@ -20,10 +20,15 @@ class ShowDetailDialog extends StatefulWidget {
   /// Later list. Closes the dialog on success.
   final Future<void> Function()? onRemoveFromHistory;
 
-  /// Lazily loads the already-aired episodes still left to watch, next first.
-  /// When null (or it returns empty), the dialog falls back to the single known
-  /// next episode.
+  /// Lazily loads the already-aired episodes of every in-progress season (next
+  /// first), each flagged watched or not. When null (or it returns empty), the
+  /// dialog falls back to the single known next episode.
   final Future<List<NextEpisode>> Function()? loadRemaining;
+
+  /// Marks a specific episode from the loaded list watched. Required to show a
+  /// per-episode Watch button; without it, watched episodes still show their
+  /// checkmark but unwatched ones show no inline action.
+  final Future<void> Function(NextEpisode ep)? onWatchEpisode;
 
   const ShowDetailDialog({
     super.key,
@@ -32,6 +37,7 @@ class ShowDetailDialog extends StatefulWidget {
     this.onStopWatching,
     this.onRemoveFromHistory,
     this.loadRemaining,
+    this.onWatchEpisode,
   });
 
   @override
@@ -41,9 +47,14 @@ class ShowDetailDialog extends StatefulWidget {
 class _ShowDetailDialogState extends State<ShowDetailDialog> {
   bool _busy = false;
 
-  /// Remaining aired episodes; null until loaded.
+  /// Aired episodes of in-progress seasons (watched and unwatched); null
+  /// until loaded.
   List<NextEpisode>? _remaining;
   bool _loadingRemaining = false;
+
+  /// The episode currently being marked watched via its row button, if any —
+  /// used to show a per-row spinner without disabling the rest of the dialog.
+  NextEpisode? _busyEpisode;
 
   @override
   void initState() {
@@ -143,9 +154,10 @@ class _ShowDetailDialogState extends State<ShowDetailDialog> {
 
     // Loaded a real list — show it (next episode first).
     if (list != null && list.isNotEmpty) {
+      final left = list.where((e) => !e.watched).length;
       return [
         const SizedBox(height: 16),
-        _sectionTitle('Remaining episodes', count: list.length),
+        _sectionTitle('Episodes', count: list.length, subtitle: '$left left'),
         const SizedBox(height: 8),
         for (final ep in list) _episodeRow(ep),
       ];
@@ -183,45 +195,119 @@ class _ShowDetailDialogState extends State<ShowDetailDialog> {
     return const [];
   }
 
-  Widget _sectionTitle(String title, {int? count}) {
-    return Text(
-      count != null ? '$title ($count)' : title,
-      style: const TextStyle(fontWeight: FontWeight.bold),
+  Widget _sectionTitle(String title, {int? count, String? subtitle}) {
+    final label = count != null ? '$title ($count)' : title;
+    return Row(
+      children: [
+        Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+        if (subtitle != null) ...[
+          const SizedBox(width: 6),
+          Text(subtitle,
+              style: const TextStyle(color: Colors.white54, fontSize: 12)),
+        ],
+      ],
     );
   }
 
   Widget _episodeRow(NextEpisode ep) {
+    final dimmed = ep.watched ? 0.55 : 1.0;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _thumb(ep),
+          Opacity(opacity: dimmed, child: _thumb(ep)),
           const SizedBox(width: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  ep.title != null ? '${ep.code} · ${ep.title}' : ep.code,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                if (ep.airDate != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(_date(ep.airDate!),
-                        style: const TextStyle(
-                            color: Colors.white54, fontSize: 12)),
+            child: Opacity(
+              opacity: dimmed,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    ep.title != null ? '${ep.code} · ${ep.title}' : ep.code,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
-              ],
+                  if (ep.airDate != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(_date(ep.airDate!),
+                          style: const TextStyle(
+                              color: Colors.white54, fontSize: 12)),
+                    ),
+                ],
+              ),
             ),
           ),
+          const SizedBox(width: 8),
+          _episodeStatus(ep),
         ],
       ),
     );
+  }
+
+  /// Trailing control for an episode row: a spinner while it's being marked, a
+  /// checkmark once watched, or a tappable Watch button when it isn't (and a
+  /// handler was supplied) — otherwise nothing.
+  Widget _episodeStatus(NextEpisode ep) {
+    final busy = _busyEpisode != null &&
+        _busyEpisode!.season == ep.season &&
+        _busyEpisode!.number == ep.number;
+    if (busy) {
+      return const Padding(
+        padding: EdgeInsets.all(8),
+        child: SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    if (ep.watched) {
+      return const Padding(
+        padding: EdgeInsets.all(8),
+        child: Icon(Icons.check_circle, color: Color(0xFF2E7D32), size: 22),
+      );
+    }
+    if (widget.onWatchEpisode == null) return const SizedBox.shrink();
+    return IconButton(
+      icon: const Icon(Icons.radio_button_unchecked),
+      tooltip: 'Mark ${ep.code} watched',
+      onPressed: () => _markEpisodeWatched(ep),
+    );
+  }
+
+  /// Marks a single episode watched via [ShowDetailDialog.onWatchEpisode],
+  /// then reloads the episode list so its row picks up the new watched state
+  /// (and the next-episode pointer, if it moved). The dialog stays open.
+  Future<void> _markEpisodeWatched(NextEpisode ep) async {
+    final callback = widget.onWatchEpisode;
+    if (callback == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _busyEpisode = ep);
+    try {
+      await callback(ep);
+      if (!mounted) return;
+      messenger
+          .showSnackBar(SnackBar(content: Text('Marked ${ep.code} watched')));
+      final loader = widget.loadRemaining;
+      if (loader != null) {
+        try {
+          final eps = await loader();
+          if (mounted) setState(() => _remaining = eps);
+        } catch (_) {
+          // Keep showing the stale list rather than losing it.
+        }
+      }
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('Action failed: $e')));
+    } finally {
+      if (mounted) setState(() => _busyEpisode = null);
+    }
   }
 
   Widget _thumb(NextEpisode ep) {
@@ -246,15 +332,20 @@ class _ShowDetailDialogState extends State<ShowDetailDialog> {
 
   Widget _actions() {
     final title = widget.show.show.title;
+    // widget.show is mutated in place by the controller, so re-check
+    // nextEpisode here (not just onWatch's presence) — a row-level Watch can
+    // catch the show up while this dialog stays open, and a stale button would
+    // otherwise null-check-crash on the code below.
+    final nextEpisode = widget.show.nextEpisode;
     final primary = <Widget>[
-      if (widget.onWatch != null)
+      if (widget.onWatch != null && nextEpisode != null)
         _actionButton(
           icon: Icons.check_rounded,
           label: 'Watch',
           background: const Color(0xFF2E7D32),
           foreground: Colors.white,
           onPressed: () => _run(widget.onWatch!,
-              'Marked ${widget.show.nextEpisode!.code} of “$title” watched'),
+              'Marked ${nextEpisode.code} of “$title” watched'),
         ),
       if (widget.onStopWatching != null)
         _actionButton(

@@ -13,6 +13,12 @@ class NextEpisode {
   /// Trakt episode id, used to mark this episode watched.
   final int? traktId;
 
+  /// Whether the user has already watched this episode. Only meaningful for
+  /// entries coming from [ShowEnricher.remainingEpisodes], which lists every
+  /// episode of an in-progress season (not just the unwatched ones); the
+  /// single "next episode" pointer is always unwatched by definition.
+  final bool watched;
+
   const NextEpisode({
     required this.season,
     required this.number,
@@ -21,6 +27,7 @@ class NextEpisode {
     this.stillPath,
     this.airDate,
     this.traktId,
+    this.watched = false,
   });
 
   String get code => 'S${_pad(season)}E${_pad(number)}';
@@ -39,6 +46,7 @@ class NextEpisode {
         if (stillPath != null) 'stillPath': stillPath,
         if (airDate != null) 'airDate': airDate!.toIso8601String(),
         if (traktId != null) 'traktId': traktId,
+        if (watched) 'watched': watched,
       };
 
   factory NextEpisode.fromJson(Map<String, dynamic> json) => NextEpisode(
@@ -49,6 +57,7 @@ class NextEpisode {
         stillPath: json['stillPath'] as String?,
         airDate: parseIsoOrNull(json['airDate']),
         traktId: json['traktId'] as int?,
+        watched: json['watched'] as bool? ?? false,
       );
 }
 
